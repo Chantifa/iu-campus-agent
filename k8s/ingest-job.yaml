@@ -28,12 +28,20 @@ spec:
                 sleep 20
               done
               exec iu-agent ingest
+          # Secret first, ConfigMap second (later sources win); explicit env entries win over both.
           envFrom:
-            - configMapRef:
-                name: iu-agent-config
             - secretRef:
                 name: iu-agent-secrets
                 optional: true
+            - configMapRef:
+                name: iu-agent-config
+          env:
+            - name: IU_DOCS_PATH
+              value: /data/iu
+            - name: DATA_DIR
+              value: /app/data
+            - name: QDRANT_URL
+              value: http://qdrant:6333
           volumeMounts:
             - name: data
               mountPath: /app/data

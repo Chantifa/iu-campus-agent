@@ -26,12 +26,24 @@ spec:
           command: ["sleep", "infinity"]
           stdin: true
           tty: true
+          # Order matters: a later source overrides an earlier one, so the secret (usually created
+          # from the whole .env, which may contain Windows paths) comes first and the cluster
+          # ConfigMap second. The explicit env entries below win over both.
           envFrom:
-            - configMapRef:
-                name: iu-agent-config
             - secretRef:
                 name: iu-agent-secrets
                 optional: true
+            - configMapRef:
+                name: iu-agent-config
+          env:
+            - name: IU_DOCS_PATH
+              value: /data/iu
+            - name: DATA_DIR
+              value: /app/data
+            - name: WORKSPACE_DIR
+              value: /workspace
+            - name: QDRANT_URL
+              value: http://qdrant:6333
           volumeMounts:
             - name: data
               mountPath: /app/data

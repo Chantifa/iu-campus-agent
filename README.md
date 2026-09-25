@@ -300,7 +300,7 @@ the course material), an ingestion Job and an idle agent Deployment you attach t
 docker build -t iu-campus-agent:latest .                 # image must be reachable by the cluster
 make k8s-load-image                                      # Docker Desktop (kind): copy it into the node
 kubectl create namespace iu-agent
-kubectl -n iu-agent create secret generic iu-agent-secrets --from-env-file=.env
+kubectl -n iu-agent create secret generic iu-agent-secrets --from-env-file=.env   # keys; paths in it are ignored
 kubectl apply -k k8s/
 scripts/k8s-upload-docs.sh "C:/Users/X/OneDrive/IU"      # copy the documents into the cluster (once)
 kubectl -n iu-agent logs -f job/iu-agent-ingest          # indexing starts after the upload
@@ -318,6 +318,8 @@ the script after adding material, then restart the job:
 kubectl -n iu-agent delete job iu-agent-ingest && kubectl apply -k k8s/
 ```
 
+The secret may simply be your whole `.env`: the pods take `IU_DOCS_PATH`, `DATA_DIR`, `QDRANT_URL`
+and `WORKSPACE_DIR` from the manifests, so Windows paths in the file do no harm.
 Docker Desktop's kind-based Kubernetes keeps its own image store, so a locally built image has to
 be imported into the node (`make k8s-load-image` runs `docker save … | docker exec -i
 desktop-control-plane ctr -n k8s.io images import -`); on a real cluster push the image to a
