@@ -119,11 +119,14 @@ def _run_ingest(settings: Settings, store: CourseVectorStore, path: Path | None,
     ingestor = Ingestor(settings, store)
     documents = ingestor.collect_folder(path)
     console.print(f"Found {len(documents)} supported files under {path or settings.iu_docs_path}")
+    plain = not console.is_terminal  # e.g. `kubectl logs`: print a line now and then instead of a bar
     with _progress() as progress:
         task = progress.add_task("indexing", total=len(documents))
 
         def on_progress(done: int, total: int, name: str) -> None:
             progress.update(task, completed=done, description=f"indexing {name[:40]}")
+            if plain and (done % 20 == 0 or done == total):
+                console.print(f"[{done}/{total}] {name}")
 
         report = ingestor.ingest(documents, force=force, on_progress=on_progress)
     if prune:
@@ -637,6 +640,8 @@ def run_moodle_sync(
 
         def on_progress(done: int, total: int, name: str) -> None:
             progress.update(task, total=total, completed=done, description=f"indexing {name[:40]}")
+            if not console.is_terminal and (done % 20 == 0 or done == total):
+                console.print(f"[{done}/{total}] {name}")
 
         report, plan = sync.run(course_ids, force=force, on_progress=on_progress)
     console.print(f"[green]myCampus sync finished:[/green] {report.summary()}")
