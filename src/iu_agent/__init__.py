@@ -1,6 +1,7 @@
 """IU Campus Agent: a Claude-Code-style CLI agent with a RAG over IU course material."""
 
 import os
+import warnings
 
 # fastembed downloads public models from the Hugging Face hub. huggingface_hub reads these flags
 # at import time, so they have to be set before any embedding library is imported: an expired
@@ -8,5 +9,9 @@ import os
 # symlink warning on Windows is only noise.
 os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+
+# fastembed warns that some models now run in fp32 instead of fp16; nothing to act on.
+warnings.filterwarnings("ignore", message=".*fp16.*")
 
 __version__ = "0.1.0"
