@@ -13,7 +13,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WORKSPACE_DIR=/workspace \
     FASTEMBED_CACHE_PATH=/app/data/fastembed \
     HF_HUB_DISABLE_IMPLICIT_TOKEN=1 \
-    QDRANT_URL=http://qdrant:6333
+    QDRANT_URL=http://qdrant:6333 \
+    PROMPT_TOOLKIT_NO_CPR=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates curl \

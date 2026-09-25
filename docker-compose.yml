@@ -1,5 +1,6 @@
+# docker compose up -d                        # qdrant + an idle agent container
 # docker compose run --rm agent ingest        # index the mounted documents folder
-# docker compose run --rm agent               # interactive chat
+# docker compose exec -it agent iu-agent chat # interactive chat (or: docker compose run --rm agent chat)
 # docker compose run --rm agent moodle login --no-browser
 # docker compose run --rm agent moodle sync
 services:
@@ -21,6 +22,9 @@ services:
   agent:
     build: .
     image: iu-campus-agent:latest
+    # `docker compose up` cannot run an interactive chat, so the service idles and you attach with
+    # `docker compose exec -it agent iu-agent chat`; `docker compose run --rm agent <cmd>` still works.
+    command: ["idle"]
     env_file:
       - path: .env
         required: false

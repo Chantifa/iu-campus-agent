@@ -33,13 +33,13 @@ docker-build:
 	docker build -t iu-campus-agent:latest .
 
 docker-up:
-	docker compose up -d qdrant
+	docker compose up -d
 
 docker-down:
 	docker compose down
 
 docker-chat:
-	docker compose run --rm agent
+	docker compose run --rm agent chat
 
 docker-ingest:
 	docker compose run --rm agent ingest

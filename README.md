@@ -278,11 +278,17 @@ input, Ctrl+D exits, Up/Down browse the history (`data/chat_history.txt`).
 ```bash
 cp .env.example .env              # keys + IU_DOCS_HOST_PATH (folder that is mounted read-only)
 docker compose build
+docker compose up -d                          # qdrant + an idle agent container
 docker compose run --rm agent ingest          # index the mounted folder into the qdrant service
-docker compose run --rm agent                 # interactive chat
+docker compose exec -it agent iu-agent chat   # interactive chat (or: docker compose run --rm agent chat)
 docker compose run --rm agent moodle login --no-browser   # prints the login URL, paste the result
 docker compose run --rm agent moodle sync
+docker compose down
 ```
+
+`docker compose up` on its own does not open a chat: the agent service runs `iu-agent idle` so
+that it can be attached to, and `iu-agent chat` refuses to start without an interactive terminal
+(it would otherwise print its prompts into the compose log, which is what happens with plain `up`).
 
 * `qdrant` runs as a service (`qdrant/qdrant:v1.19.1`, volume `qdrant_data`, port 6333 also on
   the host so a local `iu-agent` can use `QDRANT_URL=http://localhost:6333`).

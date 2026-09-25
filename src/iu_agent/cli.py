@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import shlex
+import time
 import uuid
 import webbrowser
 from collections.abc import Iterable
@@ -690,6 +691,12 @@ def chat(
 
 
 def _chat(model: str | None, no_rag: bool) -> None:
+    if not interactive_terminal():
+        console.print(
+            "iu-agent chat needs an interactive terminal. Use `docker compose run --rm agent chat`, "
+            "`docker compose exec -it agent iu-agent chat` or the non-interactive `iu-agent ask ...`."
+        )
+        raise typer.Exit(code=2)
     settings = load_settings()
     session = ChatSession(settings, no_rag=no_rag)
     session.choose_model(model)
@@ -773,6 +780,17 @@ def models(
         )
         return
     console.print(models_table(found, default_model_ref(settings)))
+
+
+@app.command()
+def idle() -> None:
+    """Keep a container alive (docker compose up / Kubernetes); attach with `iu-agent chat`."""
+    console.print("iu-agent is idle; attach with: docker compose exec -it agent iu-agent chat")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
 
 
 @app.command()

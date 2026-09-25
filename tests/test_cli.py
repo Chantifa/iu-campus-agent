@@ -48,3 +48,11 @@ def test_ingest_dry_run(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "1 files would be indexed" in result.output
     assert "Maths" in result.output
+
+
+def test_chat_refuses_without_terminal(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    result = runner.invoke(app, ["chat"])
+    assert result.exit_code == 2
+    assert "interactive terminal" in result.output
