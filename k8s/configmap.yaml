@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iu-agent-config
+data:
+  QDRANT_URL: "http://qdrant:6333"
+  DATA_DIR: "/app/data"
+  IU_DOCS_PATH: "/data/iu"
+  WORKSPACE_DIR: "/workspace"
+  EMBEDDING_MODEL: "jinaai/jina-embeddings-v2-base-de"
+  HYBRID_SEARCH: "true"
+  IU_EXCLUDE_GLOBS: "Bill/**,Certificate/**"
+  MOODLE_URL: "https://mycampus-classic.iu.org"
+  MOODLE_SYNC_FORUMS: "news"
+  # DEFAULT_MODEL: "anthropic:claude-opus-5"

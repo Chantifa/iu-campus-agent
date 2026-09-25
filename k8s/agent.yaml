@@ -1,0 +1,57 @@
+# The agent is a CLI, so the pod idles and you attach to it:
+#   kubectl -n iu-agent exec -it deploy/iu-agent -- iu-agent chat
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iu-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: iu-agent
+  template:
+    metadata:
+      labels:
+        app: iu-agent
+    spec:
+      containers:
+        - name: agent
+          image: iu-campus-agent:latest
+          imagePullPolicy: IfNotPresent
+          command: ["sleep", "infinity"]
+          stdin: true
+          tty: true
+          envFrom:
+            - configMapRef:
+                name: iu-agent-config
+            - secretRef:
+                name: iu-agent-secrets
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: docs
+              mountPath: /data/iu
+              readOnly: true
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              memory: 4Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: iu-agent-data
+        - name: docs
+          # Docker Desktop Kubernetes exposes the Windows drive under /run/desktop/mnt/host/<drive>/...
+          # Replace with a PVC / NFS volume on a real cluster.
+          hostPath:
+            path: /run/desktop/mnt/host/c/Users/X/OneDrive/IU
+            type: Directory
+        - name: workspace
+          emptyDir: {}

@@ -1,0 +1,10 @@
+# Manifest, cached embedding models, Moodle token and chat history of the agent.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: iu-agent-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
