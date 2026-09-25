@@ -1,6 +1,7 @@
 # Indexes the uploaded course material. The container waits until the upload script has written
 # /data/iu/.upload-complete, so `kubectl apply -k k8s/` can be run before the upload.
 # Re-run later with:  kubectl -n iu-agent delete job iu-agent-ingest; kubectl apply -k k8s/
+# Pause / resume:     kubectl -n iu-agent patch job iu-agent-ingest -p '{"spec":{"suspend":true}}'   (false to resume)
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -42,17 +43,21 @@ spec:
               value: /app/data
             - name: QDRANT_URL
               value: http://qdrant:6333
+            - name: EMBEDDING_THREADS
+              value: "3"
           volumeMounts:
             - name: data
               mountPath: /app/data
             - name: docs
               mountPath: /data/iu
               readOnly: true
+          # Embedding is CPU bound; the limit keeps a laptop usable while the job runs for hours.
           resources:
             requests:
               cpu: "1"
               memory: 2Gi
             limits:
+              cpu: "3"
               memory: 6Gi
       volumes:
         - name: data
