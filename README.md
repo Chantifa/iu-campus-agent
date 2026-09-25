@@ -347,8 +347,9 @@ With the default embedding model the first run of the whole IU folder takes seve
 laptop CPU (see [Speed and embedding profiles](#speed-and-embedding-profiles); set the fast profile
 in `k8s/configmap.yaml` if you prefer). Indexing is incremental: a restarted Job skips everything
 that is already in the manifest on the shared `iu-agent-data` volume. The Job is capped at 3 CPUs
-(`k8s/ingest-job.yaml`) so the machine stays usable; pause and resume it with
-`kubectl -n iu-agent patch job iu-agent-ingest -p '{"spec":{"suspend":true}}'` (`false` to resume).
+(`k8s/ingest-job.yaml`) so the machine stays usable; pause and resume it with `make k8s-pause` /
+`make k8s-resume`, i.e. `kubectl -n iu-agent patch job iu-agent-ingest -p 'spec: {suspend: true}'`
+(the YAML form works in PowerShell too, where a JSON patch loses its double quotes).
 
 ### 4. Re-index or update
 

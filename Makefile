@@ -5,7 +5,7 @@ else
 PY := .venv/bin/python
 endif
 
-.PHONY: venv install test lint chat ingest status docker-build docker-up docker-down docker-chat docker-ingest k8s-load-image k8s-apply k8s-upload-docs k8s-ingest k8s-chat k8s-update k8s-delete
+.PHONY: venv install test lint chat ingest status docker-build docker-up docker-down docker-chat docker-ingest k8s-load-image k8s-apply k8s-upload-docs k8s-ingest k8s-chat k8s-pause k8s-resume k8s-update k8s-delete
 
 venv:
 	py -3.12 -m venv .venv || python3.12 -m venv .venv
@@ -60,6 +60,12 @@ k8s-ingest:
 
 k8s-chat:
 	kubectl -n iu-agent exec -it deploy/iu-agent -- iu-agent chat
+
+k8s-pause:
+	kubectl -n iu-agent patch job iu-agent-ingest -p 'spec: {suspend: true}'
+
+k8s-resume:
+	kubectl -n iu-agent patch job iu-agent-ingest -p 'spec: {suspend: false}'
 
 k8s-update: docker-build k8s-load-image
 	kubectl -n iu-agent rollout restart deploy/iu-agent
