@@ -156,6 +156,32 @@ The vector database lives in `data/qdrant` (embedded Qdrant, no server needed). 
 to a server (`http://localhost:6333`) to share the index with Docker or other processes; the
 embedded mode can only be opened by one process at a time.
 
+### Speed and embedding profiles
+
+Embeddings are computed on the CPU. Measured on a ThinkPad (64 chunks of ~1,100 characters,
+fastembed, ONNX runtime):
+
+| `EMBEDDING_MODEL` | chunks/s | dim | notes |
+|---|---|---|---|
+| `jinaai/jina-embeddings-v2-base-de` (default) | 1.3 | 768 | best quality, German + English, 8k-token context |
+| `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | 1.5 | 768 | 50 languages |
+| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 9.8 | 384 | **fast profile**, truncates at 128 tokens, use `CHUNK_SIZE=450` |
+| `minishlab/potion-multilingual-128M` | 568 | 256 | static embeddings, instant indexing, weaker semantics (BM25 still exact) |
+
+A real run: the *Advanced Maths* course (15 PDFs incl. a 280-page course book) became 858 chunks
+in about 15 minutes with the default model. For the whole IU folder plan on several hours with the
+default model, well under an hour with the fast profile:
+
+```bash
+# fast profile (put into .env, then `iu-agent ingest --reset` because the vector size changes)
+EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+CHUNK_SIZE=450
+CHUNK_OVERLAP=60
+```
+
+Indexing is incremental, so a long first run can also be split by folder
+(`iu-agent ingest "…/IU/Semester_1"`, then `Semester_2`, …) or left running in Docker.
+
 ## myCampus (Moodle) integration
 
 `https://mycampus-classic.iu.org` is a Moodle site. Its public configuration

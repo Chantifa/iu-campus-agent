@@ -1,4 +1,6 @@
-# IU Campus Agent - CLI agent image
+# check=skip=SecretsUsedInArgOrEnv
+# IU Campus Agent - CLI agent image (the skipped check misreads the HF_HUB_DISABLE_IMPLICIT_TOKEN
+# flag as a secret; it is a boolean switch)
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
