@@ -36,6 +36,27 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-opus-5"
     anthropic_effort: str | None = Field(default=None, description="low | medium | high | xhigh | max")
 
+    # Swiss AI "Apertus" open models (https://huggingface.co/swiss-ai), served through the Hugging
+    # Face inference router by default (OpenAI-compatible; the HF token needs the "Inference
+    # Providers" permission). Any other OpenAI-compatible endpoint hosting the models works as
+    # well, e.g. https://api.publicai.co/v1 with a Public AI key or a local vLLM server.
+    swissai_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("SWISSAI_API_KEY", "HF_TOKEN", "HUGGINGFACE_TOKEN")
+    )
+    swissai_base_url: str = "https://router.huggingface.co/v1"
+    swissai_model: str = "swiss-ai/Apertus-v1.5-70B"
+    swissai_provider: str | None = Field(
+        default=None,
+        description="Pin a provider on the HF router, e.g. publicai or featherless-ai",
+    )
+    swissai_tools: bool = Field(
+        default=True,
+        description="Use native function calling. Set to false if the endpoint rejects tools; retrieval "
+        "results are then injected into the prompt instead.",
+    )
+    swissai_max_output_tokens: int = 4096
+
+    # Moonshot Kimi (OpenAI-compatible API)
     moonshot_api_key: SecretStr | None = Field(
         default=None, validation_alias=AliasChoices("MOONSHOT_API_KEY", "KIMI_API_KEY")
     )
@@ -49,8 +70,8 @@ class Settings(BaseSettings):
 
     default_model: str | None = Field(
         default=None,
-        description="Model to start with, e.g. 'anthropic:claude-opus-5' or 'kimi:kimi-k3'. "
-        "If unset the CLI asks which model to use.",
+        description="Model to start with, e.g. 'anthropic:claude-opus-5', "
+        "'swissai:swiss-ai/Apertus-v1.5-70B' or 'kimi:kimi-k3'. If unset the CLI asks which model to use.",
     )
     max_output_tokens: int = 16000
     context_budget_tokens: int = 120_000

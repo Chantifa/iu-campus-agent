@@ -64,6 +64,11 @@ def _format_hit(index: int, doc, score: float) -> str:
     return f"### Result {index} (score {score:.3f}) - {location}\nsource: {meta.get('source')}\n{body}"
 
 
+def format_hits(hits: list) -> str:
+    """Render search hits (document, score) for the model."""
+    return "\n\n".join(_format_hit(i, doc, score) for i, (doc, score) in enumerate(hits, 1))
+
+
 def resolve_course(name: str | None, manifest: Manifest) -> str | None:
     """Map a fuzzy course name / code typed by the model to an indexed course name."""
     if not name:

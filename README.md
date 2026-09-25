@@ -9,7 +9,8 @@ A **Claude-Code-style software agent for the terminal**, written in Python with
 * Course content comes from **myCampus classic (Moodle) through its web-service API** and/or from
   the local **OneDrive/IU** folder (PDF, DOCX, PPTX, XLSX, HTML, notebooks, Markdown ...).
 * Choose the LLM at start-up or at any time with `/model`: **Claude** (Anthropic API),
-  **Kimi** (Moonshot API) or a local **Ollama** model.
+  **Swiss AI Apertus** (open models by ETH Zurich / EPFL, via the Hugging Face inference router or
+  Public AI), **Kimi** (Moonshot API) or a local **Ollama** model.
 * Runs locally, in **Docker Compose** or on **Kubernetes**.
 
 ```
@@ -53,7 +54,7 @@ det(A − λI) = 0 ... (DLMDSAM01-01_Session3.pdf, p. 14)
                           └──────┬──────────────────┬───────────────────┬───────────────┘
                                  │                  │                   │
               ┌──────────────────▼───┐    ┌─────────▼─────────┐   ┌─────▼──────────────────────┐
-              │ Claude / Kimi / Ollama│    │ RAG tools          │   │ software tools             │
+              │ Claude/Apertus/Kimi   │    │ RAG tools          │   │ software tools             │
               │ (langchain-anthropic, │    │ search_course_...  │   │ read_file, write_file,     │
               │  langchain-openai,    │    │ list_courses,      │   │ list_directory, run_shell, │
               │  langchain-ollama)    │    │ read_document      │   │ fetch_url, moodle_*        │
@@ -91,6 +92,8 @@ det(A − λI) = 0 ... (DLMDSAM01-01_Session3.pdf, p. 14)
   * Claude: `ANTHROPIC_API_KEY` from <https://console.anthropic.com> (a claude.ai subscription
     is not an API key; alternatively install the Anthropic CLI and run `ant auth login`, the SDK
     picks that profile up automatically)
+  * Swiss AI Apertus: `HF_TOKEN`, a fine-grained Hugging Face token with the *Inference Providers*
+    permission from <https://huggingface.co/settings/tokens> (or a Public AI key, see below)
   * Kimi: `MOONSHOT_API_KEY` from <https://platform.kimi.ai>
   * or a running Ollama server (`OLLAMA_BASE_URL`)
 * Embeddings run on the CPU, nothing else is needed. The first start downloads ~330 MB of models.
@@ -129,11 +132,31 @@ the chat use `/model` for the list again, or switch directly, e.g. `/model kimi:
 | Provider | Models (recommended first) | Configuration |
 |---|---|---|
 | Anthropic Claude | `claude-opus-5` (default), `claude-sonnet-5`, `claude-haiku-4-5`, `claude-fable-5-1`, `claude-opus-4-8`, `claude-sonnet-4-6` | `ANTHROPIC_API_KEY`, optional `ANTHROPIC_EFFORT=low|medium|high|xhigh|max` |
+| Swiss AI Apertus | `swiss-ai/Apertus-v1.5-70B` (default), `swiss-ai/Apertus-70B-Instruct-2509`, `swiss-ai/Apertus-8B-Instruct-2509` | `HF_TOKEN` (or `SWISSAI_API_KEY`), optional `SWISSAI_BASE_URL`, `SWISSAI_PROVIDER`, `SWISSAI_TOOLS` |
 | Moonshot Kimi | `kimi-k3` (default), `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6` | `MOONSHOT_API_KEY`, optional `KIMI_REASONING_EFFORT=low|high|max` |
 | Ollama | whatever is pulled, e.g. `qwen3:8b` | `OLLAMA_BASE_URL=http://localhost:11434` |
 
-Set `DEFAULT_MODEL=anthropic:claude-opus-5` (or `kimi:kimi-k3`) in `.env` to skip the question.
-Switching models mid-conversation keeps the conversation.
+Set `DEFAULT_MODEL=anthropic:claude-opus-5` (or `swissai:swiss-ai/Apertus-v1.5-70B`, `kimi:kimi-k3`)
+in `.env` to skip the question. Switching models mid-conversation keeps the conversation.
+
+### Swiss AI Apertus
+
+[Apertus](https://huggingface.co/swiss-ai) is the open, Apache-2.0 model family of the Swiss AI
+Initiative (ETH Zurich, EPFL, CSCS): `swiss-ai/Apertus-v1.5-70B` (July 2026, 64K context),
+`swiss-ai/Apertus-70B-Instruct-2509` and `swiss-ai/Apertus-8B-Instruct-2509`. The agent talks to
+them through OpenAI-compatible endpoints:
+
+| Endpoint | Configuration |
+|---|---|
+| Hugging Face inference router (default) | `HF_TOKEN=hf_…` (fine-grained token with the *Inference Providers* permission). Optional `SWISSAI_PROVIDER=publicai` or `featherless-ai` pins the provider. |
+| Public AI Inference Utility | `SWISSAI_BASE_URL=https://api.publicai.co/v1`, `SWISSAI_API_KEY=…`, `SWISSAI_MODEL=swiss-ai/apertus-v1.5-70b` |
+| Your own server (vLLM, SGLang) | `SWISSAI_BASE_URL=http://host:8000/v1`, `SWISSAI_API_KEY=anything` |
+| Local through Ollama | pull a GGUF build (`ollama run hf.co/<user>/Apertus-8B-Instruct-2509-GGUF:Q4_K_M`) and use the `ollama` provider |
+
+`iu-agent models --live` lists the Apertus models the router currently serves. Apertus supports
+tool use; if an endpoint rejects the `tools` parameter set `SWISSAI_TOOLS=false` and the agent
+switches to classic RAG: the best matching chunks are injected into the prompt for every message,
+and the file and shell tools are disabled.
 
 ## Indexing the OneDrive/IU folder
 
@@ -294,6 +317,8 @@ All settings are environment variables (or `.env`), see `.env.example`.
 |---|---|---|
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | – | Claude access (`ANTHROPIC_ENABLED=true` when using an `ant auth login` profile) |
 | `ANTHROPIC_MODEL` / `ANTHROPIC_EFFORT` | `claude-opus-5` / – | default Claude model, effort level |
+| `HF_TOKEN` (or `SWISSAI_API_KEY`) | – | Swiss AI Apertus access (Hugging Face inference router or another OpenAI-compatible endpoint) |
+| `SWISSAI_BASE_URL` / `SWISSAI_MODEL` / `SWISSAI_PROVIDER` / `SWISSAI_TOOLS` | `https://router.huggingface.co/v1` / `swiss-ai/Apertus-v1.5-70B` / – / true | Apertus endpoint, default model, provider pin, function calling |
 | `MOONSHOT_API_KEY` (or `KIMI_API_KEY`) | – | Kimi access |
 | `MOONSHOT_BASE_URL` / `KIMI_MODEL` / `KIMI_REASONING_EFFORT` | `https://api.moonshot.ai/v1` / `kimi-k3` / – | Kimi endpoint and defaults |
 | `OLLAMA_BASE_URL` / `OLLAMA_MODEL` / `OLLAMA_NUM_CTX` | – / `qwen3:8b` / 32768 | local models |
@@ -329,7 +354,7 @@ src/iu_agent/
   cli.py            typer commands + the interactive ChatSession (streaming, slash commands)
   ui.py             rich rendering: banner, streaming Markdown, tool calls, approval prompts
   config.py         pydantic-settings configuration
-  models.py         provider registry (Anthropic / Kimi / Ollama), live model lists, factory
+  models.py         provider registry (Anthropic / Swiss AI Apertus / Kimi / Ollama), live lists, factory
   agent/graph.py    LangGraph StateGraph (agent ⇄ tools), history trimming
   agent/tools.py    RAG + software tools, interrupt-based approvals
   agent/prompts.py  system prompt
@@ -352,6 +377,8 @@ Dockerfile, docker-compose.yml, Makefile, .env.example
   subscription cannot be used by third-party applications.
 * Kimi K3 always thinks; if tool calling misbehaves with a thinking model, try
   `KIMI_REASONING_EFFORT=low` or `kimi-k2.6`.
+* Apertus on the Hugging Face router is served by third-party providers (Public AI, Featherless);
+  if a provider rejects tool calls, set `SWISSAI_TOOLS=false` for prompt-injected retrieval.
 * The embedded Qdrant is single-process: run either `ingest` or `chat` at a time, or use the
   Qdrant server from `docker compose up -d qdrant` with `QDRANT_URL=http://localhost:6333`.
 * Conversations are kept in memory for the session (`/clear` starts a new thread); the input

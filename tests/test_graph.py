@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -123,3 +123,22 @@ def test_tools_with_auto_approval(settings):
     assert "2  world" in tools["read_file"].invoke({"path": "notes/a.txt"})
     output = tools["run_shell"].invoke({"command": "echo agent-ok"})
     assert "exit code: 0" in output and "agent-ok" in output
+
+
+def test_graph_without_tools_injects_retrieved_context():
+    seen: list = []
+
+    class RecordingModel(ScriptedChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            seen.append(list(messages))
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    model = RecordingModel(responses=[AIMessage(content="answer")])
+    graph = build_graph(model, [], "system", InMemorySaver(), retriever=lambda q: f"CONTEXT for {q}")
+    config = {"configurable": {"thread_id": "t9"}}
+    result = graph.invoke({"messages": [HumanMessage(content="eigenvalues?")]}, config)
+    assert result["messages"][-1].content == "answer"
+    system = seen[0][0]
+    assert isinstance(system, SystemMessage)
+    assert system.content.startswith("system")
+    assert "CONTEXT for eigenvalues?" in system.content

@@ -27,7 +27,7 @@ from rich.table import Table
 from iu_agent import __version__
 from iu_agent.agent.graph import NODE_AGENT, NODE_TOOLS, build_graph
 from iu_agent.agent.prompts import build_system_prompt
-from iu_agent.agent.tools import AgentContext, build_tools
+from iu_agent.agent.tools import AgentContext, build_tools, format_hits
 from iu_agent.config import Settings, load_settings
 from iu_agent.models import (
     PROVIDER_ANTHROPIC,
@@ -40,6 +40,7 @@ from iu_agent.models import (
     default_model_ref,
     list_models,
     parse_model_ref,
+    provider_supports_tools,
 )
 from iu_agent.moodle.auth import (
     clear_token,
@@ -76,6 +77,8 @@ moodle_app = typer.Typer(help="myCampus (Moodle) login, status and content sync.
 app.add_typer(moodle_app, name="moodle")
 
 console = make_console()
+
+MODEL_HELP = "Model to use, e.g. anthropic:claude-opus-5, swissai:swiss-ai/Apertus-v1.5-70B or kimi:kimi-k3."
 
 SLASH_COMMANDS = {
     "/help": "show help",
@@ -181,6 +184,7 @@ class ChatSession:
         self.llm = None
         self.graph = None
         self._system_prompt: str | None = None
+        self.tools_enabled = True
 
     # ------------------------------------------------------------------ infrastructure
     def store(self) -> CourseVectorStore | None:
@@ -208,6 +212,7 @@ class ChatSession:
                 workspace=self.workspace,
                 moodle_connected=self.moodle is not None,
                 today=dt.date.today().isoformat(),
+                tools_available=self.tools_enabled,
             )
         return self._system_prompt
 
@@ -217,14 +222,36 @@ class ChatSession:
     def set_model(self, ref: ModelRef) -> None:
         self.llm = build_chat_model(ref, self.settings)
         self.model_ref = ref
+        tools_enabled = provider_supports_tools(ref, self.settings)
+        if tools_enabled != self.tools_enabled:
+            self.tools_enabled = tools_enabled
+            self.invalidate_prompt()
         self.graph = build_graph(
             self.llm,
-            self.tools,
+            self.tools if tools_enabled else [],
             self.system_prompt,
             self.checkpointer,
             context_budget_tokens=self.settings.context_budget_tokens,
             cache_system_prompt=ref.provider == PROVIDER_ANTHROPIC,
+            retriever=None if tools_enabled else self.retrieve_context,
         )
+        if not tools_enabled:
+            console.print(
+                "[dim]Function calling is disabled for this provider: course material is retrieved "
+                "automatically for every message; file and shell tools are unavailable.[/dim]"
+            )
+
+    def retrieve_context(self, question: str) -> str:
+        """Prompt-injected retrieval for endpoints without function calling."""
+        store = self.store()
+        if store is None:
+            return ""
+        try:
+            hits = store.search(question, k=self.settings.retrieval_k)
+        except Exception as exc:
+            console.print(f"[yellow]retrieval failed: {exc}[/yellow]")
+            return ""
+        return format_hits(hits)
 
     # ------------------------------------------------------------------ model selection
     def choose_model(
@@ -629,7 +656,10 @@ def run_moodle_sync(
 def main(
     ctx: typer.Context,
     model: str = typer.Option(
-        None, "--model", "-m", help="Model to use, e.g. anthropic:claude-opus-5 or kimi:kimi-k3."
+        None,
+        "--model",
+        "-m",
+        help=MODEL_HELP,
     ),
     version: bool = typer.Option(False, "--version", help="Print the version and exit."),
 ) -> None:
@@ -643,7 +673,10 @@ def main(
 @app.command()
 def chat(
     model: str = typer.Option(
-        None, "--model", "-m", help="Model to use, e.g. anthropic:claude-opus-5 or kimi:kimi-k3."
+        None,
+        "--model",
+        "-m",
+        help=MODEL_HELP,
     ),
     no_rag: bool = typer.Option(False, "--no-rag", help="Do not open the vector store."),
 ) -> None:

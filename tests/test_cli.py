@@ -14,7 +14,16 @@ def test_version():
 
 def test_status_and_models_without_providers(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    for name in ("ANTHROPIC_API_KEY", "MOONSHOT_API_KEY", "KIMI_API_KEY", "OLLAMA_BASE_URL", "QDRANT_URL"):
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "MOONSHOT_API_KEY",
+        "KIMI_API_KEY",
+        "SWISSAI_API_KEY",
+        "HF_TOKEN",
+        "HUGGINGFACE_TOKEN",
+        "OLLAMA_BASE_URL",
+        "QDRANT_URL",
+    ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ANTHROPIC_ENABLED", "false")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
