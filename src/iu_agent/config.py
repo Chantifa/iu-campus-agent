@@ -153,7 +153,29 @@ class Settings(BaseSettings):
         os.environ.setdefault("FASTEMBED_CACHE_PATH", str(self.fastembed_cache_dir))
 
 
+def project_root() -> Path | None:
+    """Root of an editable/source install (``<root>/src/iu_agent/config.py``), else None."""
+    root = Path(__file__).resolve().parents[2]
+    return root if (root / "pyproject.toml").exists() else None
+
+
+def find_env_file() -> Path | None:
+    """``.env`` in the current directory, otherwise the one in the project folder."""
+    candidates = [Path.cwd() / ".env"]
+    root = project_root()
+    if root is not None:
+        candidates.append(root / ".env")
+    return next((c for c in candidates if c.is_file()), None)
+
+
 def load_settings(**overrides) -> Settings:
-    settings = Settings(**overrides)
+    env_file = find_env_file()
+    settings = (
+        Settings(_env_file=env_file, **overrides) if env_file else Settings(_env_file=None, **overrides)
+    )
+    # A relative DATA_DIR belongs next to the .env that configured it, so `iu-agent` started from
+    # another directory keeps using the same index instead of creating a fresh one there.
+    if env_file is not None and env_file.parent != Path.cwd() and not settings.data_dir.is_absolute():
+        settings.data_dir = env_file.parent / settings.data_dir
     settings.prepare_dirs()
     return settings
