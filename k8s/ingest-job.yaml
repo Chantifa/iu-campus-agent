@@ -1,4 +1,6 @@
-# One-off indexing run:  kubectl -n iu-agent delete job iu-agent-ingest; kubectl apply -k k8s/
+# Indexes the uploaded course material. The container waits until the upload script has written
+# /data/iu/.upload-complete, so `kubectl apply -k k8s/` can be run before the upload.
+# Re-run later with:  kubectl -n iu-agent delete job iu-agent-ingest; kubectl apply -k k8s/
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -12,11 +14,20 @@ spec:
         app: iu-agent-ingest
     spec:
       restartPolicy: Never
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: ingest
           image: iu-campus-agent:latest
           imagePullPolicy: IfNotPresent
-          args: ["ingest"]
+          command: ["sh", "-c"]
+          args:
+            - |
+              until [ -f /data/iu/.upload-complete ]; do
+                echo "waiting for the course material in /data/iu (run scripts/k8s-upload-docs.sh)"
+                sleep 20
+              done
+              exec iu-agent ingest
           envFrom:
             - configMapRef:
                 name: iu-agent-config
@@ -40,6 +51,5 @@ spec:
           persistentVolumeClaim:
             claimName: iu-agent-data
         - name: docs
-          hostPath:
-            path: /run/desktop/mnt/host/c/Users/X/OneDrive/IU
-            type: Directory
+          persistentVolumeClaim:
+            claimName: iu-agent-docs

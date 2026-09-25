@@ -1,5 +1,6 @@
 # The agent is a CLI, so the pod idles and you attach to it:
 #   kubectl -n iu-agent exec -it deploy/iu-agent -- iu-agent chat
+# The pod is also the upload target for the course material (scripts/k8s-upload-docs.sh).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,6 +17,8 @@ spec:
       labels:
         app: iu-agent
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: agent
           image: iu-campus-agent:latest
@@ -34,7 +37,6 @@ spec:
               mountPath: /app/data
             - name: docs
               mountPath: /data/iu
-              readOnly: true
             - name: workspace
               mountPath: /workspace
           resources:
@@ -48,10 +50,7 @@ spec:
           persistentVolumeClaim:
             claimName: iu-agent-data
         - name: docs
-          # Docker Desktop Kubernetes exposes the Windows drive under /run/desktop/mnt/host/<drive>/...
-          # Replace with a PVC / NFS volume on a real cluster.
-          hostPath:
-            path: /run/desktop/mnt/host/c/Users/X/OneDrive/IU
-            type: Directory
+          persistentVolumeClaim:
+            claimName: iu-agent-docs
         - name: workspace
           emptyDir: {}

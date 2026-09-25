@@ -8,3 +8,15 @@ spec:
   resources:
     requests:
       storage: 5Gi
+---
+# The course material. Filled once from your PC with `scripts/k8s-upload-docs.sh` (or kubectl cp);
+# hostPath mounts of the Windows drive are not available on Docker Desktop's kind-based Kubernetes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: iu-agent-docs
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi

@@ -293,21 +293,33 @@ docker compose run --rm agent moodle sync
 
 ## Kubernetes
 
-The manifests in `k8s/` (kustomize) deploy Qdrant as a StatefulSet, a PVC for the agent data, an
-ingestion Job and an idle agent Deployment you attach to:
+The manifests in `k8s/` (kustomize) deploy Qdrant as a StatefulSet, two PVCs (agent data and
+the course material), an ingestion Job and an idle agent Deployment you attach to:
 
 ```bash
 docker build -t iu-campus-agent:latest .                 # image must be reachable by the cluster
 kubectl create namespace iu-agent
 kubectl -n iu-agent create secret generic iu-agent-secrets --from-env-file=.env
 kubectl apply -k k8s/
-kubectl -n iu-agent logs -f job/iu-agent-ingest          # indexing
+scripts/k8s-upload-docs.sh "C:/Users/X/OneDrive/IU"      # copy the documents into the cluster (once)
+kubectl -n iu-agent logs -f job/iu-agent-ingest          # indexing starts after the upload
 kubectl -n iu-agent exec -it deploy/iu-agent -- iu-agent chat
 ```
 
-`k8s/agent.yaml` and `k8s/ingest-job.yaml` mount the documents with a `hostPath` that matches
-Docker Desktop's Kubernetes (`/run/desktop/mnt/host/c/Users/X/OneDrive/IU`). On another cluster
-replace it with a PVC or NFS volume and load the image into the cluster registry.
+The cluster cannot see your PC's folders (Docker Desktop's kind-based Kubernetes has no host
+mount, and a real cluster is on another machine anyway), so the documents live in the
+`iu-agent-docs` volume. `scripts/k8s-upload-docs.sh` streams only the indexable files (PDF, DOCX,
+PPTX, notebooks, text; `Bill/` and `Certificate/` skipped) into the agent pod with `tar` over
+`kubectl exec` and finally writes `/data/iu/.upload-complete`, which releases the ingest Job. Re-run
+the script after adding material, then restart the job:
+
+```bash
+kubectl -n iu-agent delete job iu-agent-ingest && kubectl apply -k k8s/
+```
+
+Both PVCs are `ReadWriteOnce`; on a multi-node cluster use an RWX storage class (NFS, CephFS) or
+pin the pods to one node. `make k8s-apply`, `make k8s-upload-docs` and `make k8s-delete` wrap the
+commands.
 
 ## Configuration reference
 
