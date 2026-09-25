@@ -166,8 +166,8 @@ and the file and shell tools are disabled.
 * The folder layout `Semester_1/Advanced Maths/DLMDSAM01-01_Session1.pdf` is turned into metadata:
   semester, course name, course code, file name and page/slide. The agent can filter searches by
   course.
-* `IU_EXCLUDE_GLOBS` (default `Bill/**,Certificate/**`) keeps contracts and certificates out of
-  the index. Set it to an empty string to index everything, or add more patterns.
+* `IU_EXCLUDE_GLOBS` (default `Bill/**,Certificate/**,*recovery_codes*,*recovery-codes*`) keeps contracts,
+  certificates and recovery codes out of the index. Set it to an empty string to index everything, or add more patterns.
 * `iu-agent ingest "C:/Users/X/OneDrive/IU/Semester_3"` indexes only one sub folder (metadata stays
   relative to the IU root).
 * Unchanged files are skipped, changed files are re-embedded, deleted files are removed
@@ -390,7 +390,7 @@ file explicitly and an empty value disables the lookup.
 | `QDRANT_URL` / `QDRANT_API_KEY` / `QDRANT_COLLECTION` | – / – / `iu_course_material` | vector store (unset = embedded under `DATA_DIR/qdrant`) |
 | `EMBEDDING_MODEL` / `SPARSE_MODEL` / `HYBRID_SEARCH` | `jinaai/jina-embeddings-v2-base-de` / `Qdrant/bm25` / true | retrieval |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` / `RETRIEVAL_K` | 1200 / 150 / 6 | chunking and number of results |
-| `IU_DOCS_PATH` / `IU_INCLUDE_GLOBS` / `IU_EXCLUDE_GLOBS` / `MAX_FILE_MB` | `~/OneDrive/IU` / – / `Bill/**,Certificate/**` / 200 | source folder |
+| `IU_DOCS_PATH` / `IU_INCLUDE_GLOBS` / `IU_EXCLUDE_GLOBS` / `MAX_FILE_MB` | `~/OneDrive/IU` / – / `Bill/**,Certificate/**,*recovery_codes*,*recovery-codes*` / 200 | source folder |
 | `DATA_DIR` / `WORKSPACE_DIR` / `ALLOW_OUTSIDE_WORKSPACE` | `data` / `.` / false | state folder, agent workspace |
 | `MOODLE_URL` / `MOODLE_TOKEN` / `MOODLE_SYNC_FORUMS` / `MOODLE_FETCH_URLS` | `https://mycampus-classic.iu.org` / – / `news` / false | myCampus |
 

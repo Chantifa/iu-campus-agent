@@ -9,7 +9,7 @@ data:
   WORKSPACE_DIR: "/workspace"
   EMBEDDING_MODEL: "jinaai/jina-embeddings-v2-base-de"
   HYBRID_SEARCH: "true"
-  IU_EXCLUDE_GLOBS: "Bill/**,Certificate/**"
+  IU_EXCLUDE_GLOBS: "Bill/**,Certificate/**,*recovery_codes*,*recovery-codes*"
   MOODLE_URL: "https://mycampus-classic.iu.org"
   MOODLE_SYNC_FORUMS: "news"
   # DEFAULT_MODEL: "anthropic:claude-opus-5"

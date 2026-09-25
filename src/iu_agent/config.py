@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ sources
     iu_docs_path: Path = Field(default_factory=_default_docs_path)
     iu_exclude_globs: str = Field(
-        default="Bill/**,Certificate/**",
+        default="Bill/**,Certificate/**,*recovery_codes*,*recovery-codes*",
         description="Comma separated glob patterns (relative to IU_DOCS_PATH) that are never indexed.",
     )
     iu_include_globs: str = Field(
