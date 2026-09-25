@@ -174,6 +174,10 @@ and the file and shell tools are disabled.
   (`--no-prune` keeps them). `--reset` drops the collection and starts over, `--force` re-embeds
   everything.
 * Scanned PDFs without a text layer are reported as failed (no OCR).
+* Files with identical content (Zotero exports keep several copies of every PDF) are embedded once
+  and recorded as duplicates; documents with more than `MAX_CHUNKS_PER_DOCUMENT` chunks (default
+  4000, about 1,000 pages) are cut there. A textbook-sized PDF is a few thousand chunks, so the
+  progress bar shows `[chunks done/total]` inside such a file instead of appearing stuck.
 
 The vector database lives in `data/qdrant` (embedded Qdrant, no server needed). Point `QDRANT_URL`
 to a server (`http://localhost:6333`) to share the index with Docker or other processes; the
@@ -366,7 +370,10 @@ RWX storage class (NFS, CephFS) or pin the pods to one node.
 
 ## Configuration reference
 
-All settings are environment variables (or `.env`), see `.env.example`.
+All settings are environment variables (or `.env`), see `.env.example`. The `.env` is taken from
+the current directory, otherwise from the project folder (so `.venv\Scripts\iu-agent.exe` works from
+anywhere and a relative `DATA_DIR` stays next to that file); `IU_AGENT_ENV_FILE=<path>` selects a
+file explicitly and an empty value disables the lookup.
 
 | Variable | Default | Meaning |
 |---|---|---|

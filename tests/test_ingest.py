@@ -76,3 +76,40 @@ def test_reset_clears_everything(settings, store):
     ingestor.remove_all()
     assert store.count() == 0
     assert Manifest(settings.manifest_path).documents == {}
+
+
+def test_identical_files_are_embedded_once(settings, store):
+    root = settings.iu_docs_path
+    (root / "Semester_3" / "Statistics").mkdir(parents=True)
+    (root / "Semester_3" / "Statistics" / "My Library").mkdir()
+    text = "Bayes theorem relates conditional probabilities of two events. " * 40
+    (root / "Semester_3" / "Statistics" / "book.txt").write_text(text, encoding="utf-8")
+    (root / "Semester_3" / "Statistics" / "My Library" / "book.txt").write_text(text, encoding="utf-8")
+    ingestor = Ingestor(settings, store)
+    report = ingestor.ingest_folder()
+    assert (report.added, report.duplicates) == (1, 1)
+    entries = ingestor.manifest.documents
+    assert entries["onedrive:Semester_3/Statistics/My Library/book.txt"]["duplicate_of"] == (
+        "onedrive:Semester_3/Statistics/book.txt"
+    )
+    assert ingestor.manifest.courses() == {"Statistics": 1}
+    assert store.count() == entries["onedrive:Semester_3/Statistics/book.txt"]["chunks"]
+    # removing the original drops the duplicate entry so the copy is embedded next time
+    (root / "Semester_3" / "Statistics" / "book.txt").unlink()
+    report = ingestor.ingest_folder()
+    assert report.removed == 1 and report.added == 1 and report.duplicates == 0
+    assert store.count() > 0
+
+
+def test_oversized_documents_are_truncated(settings, store):
+    settings.max_chunks_per_document = 2
+    (settings.iu_docs_path / "big.txt").write_text(
+        "Gradient descent updates the weights. " * 400, encoding="utf-8"
+    )
+    ingestor = Ingestor(settings, store)
+    seen = []
+    report = ingestor.ingest_folder(on_progress=lambda done, total, name: seen.append(name))
+    assert report.truncated == 1
+    assert ingestor.manifest.get("onedrive:big.txt")["chunks"] == 2
+    assert ingestor.manifest.get("onedrive:big.txt")["truncated"] is True
+    assert seen[0] == "big.txt"

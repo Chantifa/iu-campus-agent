@@ -125,7 +125,7 @@ def _run_ingest(settings: Settings, store: CourseVectorStore, path: Path | None,
         task = progress.add_task("indexing", total=len(documents))
 
         def on_progress(done: int, total: int, name: str) -> None:
-            progress.update(task, completed=done, description=f"indexing {name[:40]}")
+            progress.update(task, completed=done, description=f"indexing {name[:60]}")
             if plain and (done % 20 == 0 or done == total):
                 console.print(f"[{done}/{total}] {name}")
 
@@ -640,7 +640,7 @@ def run_moodle_sync(
         task = progress.add_task("syncing myCampus", total=None)
 
         def on_progress(done: int, total: int, name: str) -> None:
-            progress.update(task, total=total, completed=done, description=f"indexing {name[:40]}")
+            progress.update(task, total=total, completed=done, description=f"indexing {name[:60]}")
             if not console.is_terminal and (done % 20 == 0 or done == total):
                 console.print(f"[{done}/{total}] {name}")
 

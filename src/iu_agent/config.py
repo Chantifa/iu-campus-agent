@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     chunk_size: int = 1200
     chunk_overlap: int = 150
     retrieval_k: int = 6
+    max_chunks_per_document: int = Field(
+        default=4000, description="Cut documents that produce more chunks (roughly 1,000 pages); 0 = no limit"
+    )
     embedding_threads: int | None = None
 
     # ------------------------------------------------------------------ sources
@@ -160,7 +163,14 @@ def project_root() -> Path | None:
 
 
 def find_env_file() -> Path | None:
-    """``.env`` in the current directory, otherwise the one in the project folder."""
+    """``.env`` in the current directory, otherwise the one in the project folder.
+
+    ``IU_AGENT_ENV_FILE`` overrides the lookup: a path selects that file, an empty value disables
+    the file lookup altogether (environment variables only).
+    """
+    override = os.environ.get("IU_AGENT_ENV_FILE")
+    if override is not None:
+        return Path(override).expanduser() if override.strip() else None
     candidates = [Path.cwd() / ".env"]
     root = project_root()
     if root is not None:

@@ -2,6 +2,8 @@
 
 A JSON manifest (``DATA_DIR/manifest.json``) remembers a fingerprint per source document so that
 re-running the ingestion only re-embeds new or changed files and removes chunks of deleted ones.
+Files with identical content (for example the copies a Zotero export leaves behind) are embedded
+once and recorded as duplicates; oversized documents are cut at ``MAX_CHUNKS_PER_DOCUMENT``.
 """
 
 from __future__ import annotations
@@ -26,7 +28,9 @@ ORIGIN_ONEDRIVE = "onedrive"
 ORIGIN_MOODLE = "moodle"
 
 COURSE_CODE_RE = re.compile(r"\b([A-Z]{3,}[A-Z0-9]*\d{2,3})\b")
+_CONTENT_HASH_RE = re.compile(r"^[a-f0-9]{64}$")
 _SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".idea", ".ipynb_checkpoints"}
+_BATCH_SIZE = 64
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -61,13 +65,16 @@ class IngestReport:
     added: int = 0
     updated: int = 0
     skipped: int = 0
+    duplicates: int = 0
+    truncated: int = 0
     removed: int = 0
     chunks: int = 0
     failed: list[tuple[str, str]] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
-            f"added {self.added}, updated {self.updated}, unchanged {self.skipped}, removed {self.removed}, "
+            f"added {self.added}, updated {self.updated}, unchanged {self.skipped}, "
+            f"duplicates {self.duplicates}, truncated {self.truncated}, removed {self.removed}, "
             f"chunks written {self.chunks}, failed {len(self.failed)}"
         )
 
@@ -106,8 +113,11 @@ class Manifest:
         return [s for s, e in self.documents.items() if origin is None or e.get("origin") == origin]
 
     def courses(self) -> dict[str, int]:
+        """Indexed documents per course (duplicates of already indexed files are not counted)."""
         counts: dict[str, int] = {}
         for entry in self.documents.values():
+            if entry.get("duplicate_of"):
+                continue
             course = entry.get("course") or "General"
             counts[course] = counts.get(course, 0) + 1
         return dict(sorted(counts.items()))
@@ -122,6 +132,16 @@ class Manifest:
             for source, entry in self.documents.items()
             if needle in source.lower() or needle in str(entry.get("file_name", "")).lower()
         ]
+
+    def content_index(self) -> dict[str, str]:
+        """Map content hash -> source of the document that holds the embedded chunks."""
+        return {
+            entry["fingerprint"]: source
+            for source, entry in self.documents.items()
+            if entry.get("fingerprint")
+            and _CONTENT_HASH_RE.match(str(entry["fingerprint"]))
+            and not entry.get("duplicate_of")
+        }
 
 
 # ----------------------------------------------------------------------------- folder scanning
@@ -216,12 +236,23 @@ class Ingestor:
     ) -> IngestReport:
         report = IngestReport()
         total = len(documents)
+        content_index = self.manifest.content_index()
+        cap = self.settings.max_chunks_per_document
         for index, document in enumerate(documents, start=1):
+            name = str(document.meta.get("file_name") or document.source)
             if on_progress:
-                on_progress(index, total, document.meta.get("file_name") or document.source)
+                on_progress(index, total, name)
             existing = self.manifest.get(document.source)
             if existing and existing.get("fingerprint") == document.fingerprint and not force:
                 report.skipped += 1
+                continue
+            original = content_index.get(document.fingerprint)
+            if original and original != document.source:
+                # identical content is already embedded under another path (e.g. Zotero copies)
+                if existing:
+                    self.store.delete_source(document.source)
+                self.manifest.set(document.source, self._entry(document, chunks=0, duplicate_of=original))
+                report.duplicates += 1
                 continue
             try:
                 sections, loaded_path = document.load()
@@ -232,26 +263,21 @@ class Ingestor:
                     chunk_size=self.settings.chunk_size,
                     chunk_overlap=self.settings.chunk_overlap,
                 )
+                truncated = False
+                if cap and len(chunks) > cap:
+                    chunks = chunks[:cap]
+                    truncated = True
+                    report.truncated += 1
                 if existing:
                     self.store.delete_source(document.source)
-                self.store.add_documents(chunks, ids=[c.metadata["id"] for c in chunks])
+                self._add_in_batches(chunks, index, total, name, on_progress)
             except Exception as exc:  # keep going, report at the end
                 report.failed.append((document.source, f"{type(exc).__name__}: {exc}"))
                 continue
-            entry = {
-                "fingerprint": document.fingerprint,
-                "chunks": len(chunks),
-                "origin": document.meta.get("origin"),
-                "course": document.meta.get("course"),
-                "file_name": document.meta.get("file_name"),
-                "indexed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            }
-            if loaded_path is not None:
-                entry["path"] = str(loaded_path)
-            for key in ("course_id", "module", "url", "semester", "course_code"):
-                if document.meta.get(key) is not None:
-                    entry[key] = document.meta[key]
+            entry = self._entry(document, chunks=len(chunks), path=loaded_path, truncated=truncated)
             self.manifest.set(document.source, entry)
+            if _CONTENT_HASH_RE.match(document.fingerprint):
+                content_index[document.fingerprint] = document.source
             report.chunks += len(chunks)
             if existing:
                 report.updated += 1
@@ -262,13 +288,62 @@ class Ingestor:
         self.manifest.save()
         return report
 
+    def _add_in_batches(
+        self,
+        chunks: list,
+        index: int,
+        total: int,
+        name: str,
+        on_progress: ProgressCallback | None,
+    ) -> None:
+        for start in range(0, len(chunks), _BATCH_SIZE):
+            batch = chunks[start : start + _BATCH_SIZE]
+            self.store.add_documents(batch, ids=[c.metadata["id"] for c in batch])
+            if on_progress and len(chunks) > _BATCH_SIZE:
+                done = min(start + _BATCH_SIZE, len(chunks))
+                on_progress(index, total, f"{name[:36]} [{done}/{len(chunks)} chunks]")
+
+    @staticmethod
+    def _entry(
+        document: SourceDocument,
+        *,
+        chunks: int,
+        path: Path | None = None,
+        duplicate_of: str | None = None,
+        truncated: bool = False,
+    ) -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "fingerprint": document.fingerprint,
+            "chunks": chunks,
+            "origin": document.meta.get("origin"),
+            "course": document.meta.get("course"),
+            "file_name": document.meta.get("file_name"),
+            "indexed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        if path is not None:
+            entry["path"] = str(path)
+        if duplicate_of:
+            entry["duplicate_of"] = duplicate_of
+        if truncated:
+            entry["truncated"] = True
+        for key in ("course_id", "module", "url", "semester", "course_code"):
+            if document.meta.get(key) is not None:
+                entry[key] = document.meta[key]
+        return entry
+
     def prune(self, origin: str, keep: set[str]) -> int:
         removed = 0
+        gone: list[str] = []
         for source in self.manifest.sources(origin):
             if source not in keep:
                 self.store.delete_source(source)
                 self.manifest.remove(source)
+                gone.append(source)
                 removed += 1
+        # duplicates of a removed original must be re-embedded next time
+        for source, entry in list(self.manifest.documents.items()):
+            if entry.get("duplicate_of") in gone:
+                self.manifest.remove(source)
         if removed:
             self.manifest.save()
         return removed
@@ -325,7 +400,8 @@ class Ingestor:
         on_progress: ProgressCallback | None = None,
     ) -> IngestReport:
         documents = self.collect_folder(root)
+        # prune first so that a copy of a deleted file is re-embedded in the same run
+        removed = self.prune(ORIGIN_ONEDRIVE, {d.source for d in documents}) if prune else 0
         report = self.ingest(documents, force=force, on_progress=on_progress)
-        if prune:
-            report.removed = self.prune(ORIGIN_ONEDRIVE, {d.source for d in documents})
+        report.removed = removed
         return report
