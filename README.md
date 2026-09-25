@@ -298,6 +298,7 @@ the course material), an ingestion Job and an idle agent Deployment you attach t
 
 ```bash
 docker build -t iu-campus-agent:latest .                 # image must be reachable by the cluster
+make k8s-load-image                                      # Docker Desktop (kind): copy it into the node
 kubectl create namespace iu-agent
 kubectl -n iu-agent create secret generic iu-agent-secrets --from-env-file=.env
 kubectl apply -k k8s/
@@ -317,7 +318,10 @@ the script after adding material, then restart the job:
 kubectl -n iu-agent delete job iu-agent-ingest && kubectl apply -k k8s/
 ```
 
-Both PVCs are `ReadWriteOnce`; on a multi-node cluster use an RWX storage class (NFS, CephFS) or
+Docker Desktop's kind-based Kubernetes keeps its own image store, so a locally built image has to
+be imported into the node (`make k8s-load-image` runs `docker save … | docker exec -i
+desktop-control-plane ctr -n k8s.io images import -`); on a real cluster push the image to a
+registry and adjust `image:` in the manifests instead. Both PVCs are `ReadWriteOnce`; on a multi-node cluster use an RWX storage class (NFS, CephFS) or
 pin the pods to one node. `make k8s-apply`, `make k8s-upload-docs` and `make k8s-delete` wrap the
 commands.
 

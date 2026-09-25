@@ -5,7 +5,7 @@ else
 PY := .venv/bin/python
 endif
 
-.PHONY: venv install test lint chat ingest status docker-build docker-up docker-down docker-chat docker-ingest k8s-apply k8s-upload-docs k8s-ingest k8s-chat k8s-delete
+.PHONY: venv install test lint chat ingest status docker-build docker-up docker-down docker-chat docker-ingest k8s-load-image k8s-apply k8s-upload-docs k8s-ingest k8s-chat k8s-delete
 
 venv:
 	py -3.12 -m venv .venv || python3.12 -m venv .venv
@@ -43,6 +43,9 @@ docker-chat:
 
 docker-ingest:
 	docker compose run --rm agent ingest
+
+k8s-load-image:
+	docker save iu-campus-agent:latest | docker exec -i desktop-control-plane ctr -n k8s.io images import -
 
 k8s-apply:
 	kubectl apply -k k8s/
