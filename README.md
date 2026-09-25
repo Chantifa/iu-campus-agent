@@ -293,39 +293,68 @@ docker compose run --rm agent moodle sync
 
 ## Kubernetes
 
-The manifests in `k8s/` (kustomize) deploy Qdrant as a StatefulSet, two PVCs (agent data and
-the course material), an ingestion Job and an idle agent Deployment you attach to:
+The manifests in `k8s/` (kustomize) deploy Qdrant as a StatefulSet, two volume claims (agent data
+and the course material), an ingestion Job and an idle agent Deployment you attach to. Tested on
+Docker Desktop's Kubernetes (kind-based, node `desktop-control-plane`); a real cluster only needs
+the image in a registry and the two notes at the end.
+
+### 1. Deploy
 
 ```bash
-docker build -t iu-campus-agent:latest .                 # image must be reachable by the cluster
-make k8s-load-image                                      # Docker Desktop (kind): copy it into the node
+docker build -t iu-campus-agent:latest .
+make k8s-load-image                      # Docker Desktop only: import the image into the node (~5 min)
 kubectl create namespace iu-agent
-kubectl -n iu-agent create secret generic iu-agent-secrets --from-env-file=.env   # keys; paths in it are ignored
-kubectl apply -k k8s/
-scripts/k8s-upload-docs.sh "C:/Users/X/OneDrive/IU"      # copy the documents into the cluster (once)
-kubectl -n iu-agent logs -f job/iu-agent-ingest          # indexing starts after the upload
-kubectl -n iu-agent exec -it deploy/iu-agent -- iu-agent chat
+kubectl -n iu-agent create secret generic iu-agent-secrets --from-env-file=.env
+kubectl apply -k k8s/                    # or: make k8s-apply
+```
+
+The secret may simply be your whole `.env`: the pods set `IU_DOCS_PATH`, `DATA_DIR`, `QDRANT_URL`
+and `WORKSPACE_DIR` themselves, so Windows paths in the file do no harm; only the API keys and the
+optional `MOODLE_TOKEN` matter.
+
+### 2. Upload the course material (once)
+
+```bash
+scripts/k8s-upload-docs.sh "C:/Users/X/OneDrive/IU"      # or: make k8s-upload-docs
 ```
 
 The cluster cannot see your PC's folders (Docker Desktop's kind-based Kubernetes has no host
-mount, and a real cluster is on another machine anyway), so the documents live in the
-`iu-agent-docs` volume. `scripts/k8s-upload-docs.sh` streams only the indexable files (PDF, DOCX,
-PPTX, notebooks, text; `Bill/` and `Certificate/` skipped) into the agent pod with `tar` over
-`kubectl exec` and finally writes `/data/iu/.upload-complete`, which releases the ingest Job. Re-run
-the script after adding material, then restart the job:
+mount, a real cluster is on another machine anyway), so the documents live in the `iu-agent-docs`
+volume. The script streams only the indexable files (PDF, DOCX, PPTX, XLSX, notebooks, HTML, text;
+`Bill/` and `Certificate/` are skipped, about 1 GB for the IU folder) into the agent pod with `tar`
+over `kubectl exec` and finally writes `/data/iu/.upload-complete`, which releases the waiting
+ingest Job.
+
+### 3. Watch the indexing, then chat
 
 ```bash
-kubectl -n iu-agent delete job iu-agent-ingest && kubectl apply -k k8s/
+kubectl -n iu-agent logs -f job/iu-agent-ingest                    # "[20/560] file.pdf" every 20 files
+kubectl -n iu-agent exec deploy/iu-agent -- iu-agent status        # documents / chunks indexed so far
+kubectl -n iu-agent exec -it deploy/iu-agent -- iu-agent chat      # or: make k8s-chat
 ```
 
-The secret may simply be your whole `.env`: the pods take `IU_DOCS_PATH`, `DATA_DIR`, `QDRANT_URL`
-and `WORKSPACE_DIR` from the manifests, so Windows paths in the file do no harm.
-Docker Desktop's kind-based Kubernetes keeps its own image store, so a locally built image has to
-be imported into the node (`make k8s-load-image` runs `docker save … | docker exec -i
-desktop-control-plane ctr -n k8s.io images import -`); on a real cluster push the image to a
-registry and adjust `image:` in the manifests instead. Both PVCs are `ReadWriteOnce`; on a multi-node cluster use an RWX storage class (NFS, CephFS) or
-pin the pods to one node. `make k8s-apply`, `make k8s-upload-docs` and `make k8s-delete` wrap the
-commands.
+With the default embedding model the first run of the whole IU folder takes several hours on a
+laptop CPU (see [Speed and embedding profiles](#speed-and-embedding-profiles); set the fast profile
+in `k8s/configmap.yaml` if you prefer). Indexing is incremental: a restarted Job skips everything
+that is already in the manifest on the shared `iu-agent-data` volume.
+
+### 4. Re-index or update
+
+```bash
+scripts/k8s-upload-docs.sh "C:/Users/X/OneDrive/IU"   # after adding material ...
+make k8s-ingest                                       # ... recreate the Job and follow its log
+
+make k8s-update                                       # after a code change: rebuild, import the image,
+                                                      # restart the agent pod and the Job
+```
+
+Pods keep running on the image they started with, so after `make k8s-load-image` a
+`kubectl -n iu-agent rollout restart deploy/iu-agent` (and a recreated Job) is needed; `make
+k8s-update` does all of that. `make k8s-delete` removes everything including the volumes.
+
+Notes for other clusters: push the image to a registry and change `image:` in `k8s/agent.yaml` and
+`k8s/ingest-job.yaml`; both volume claims are `ReadWriteOnce`, so on a multi-node cluster use an
+RWX storage class (NFS, CephFS) or pin the pods to one node.
 
 ## Configuration reference
 

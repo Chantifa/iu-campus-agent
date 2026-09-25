@@ -5,7 +5,7 @@ else
 PY := .venv/bin/python
 endif
 
-.PHONY: venv install test lint chat ingest status docker-build docker-up docker-down docker-chat docker-ingest k8s-load-image k8s-apply k8s-upload-docs k8s-ingest k8s-chat k8s-delete
+.PHONY: venv install test lint chat ingest status docker-build docker-up docker-down docker-chat docker-ingest k8s-load-image k8s-apply k8s-upload-docs k8s-ingest k8s-chat k8s-update k8s-delete
 
 venv:
 	py -3.12 -m venv .venv || python3.12 -m venv .venv
@@ -30,7 +30,7 @@ status:
 	$(PY) -m iu_agent status
 
 docker-build:
-	docker compose build
+	docker build -t iu-campus-agent:latest .
 
 docker-up:
 	docker compose up -d qdrant
@@ -60,6 +60,12 @@ k8s-ingest:
 
 k8s-chat:
 	kubectl -n iu-agent exec -it deploy/iu-agent -- iu-agent chat
+
+k8s-update: docker-build k8s-load-image
+	kubectl -n iu-agent rollout restart deploy/iu-agent
+	kubectl -n iu-agent delete job iu-agent-ingest --ignore-not-found
+	kubectl apply -k k8s/
+	kubectl -n iu-agent rollout status deploy/iu-agent --timeout=300s
 
 k8s-delete:
 	kubectl delete -k k8s/
