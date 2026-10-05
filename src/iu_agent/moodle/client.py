@@ -48,6 +48,20 @@ def with_token(fileurl: str, token: str) -> str:
     return f"{fileurl}{separator}token={token}"
 
 
+def _json_or_error(response: httpx.Response, base_url: str) -> Any:
+    """Decode a web-service answer; a non-JSON body means the address is not a Moodle site."""
+    try:
+        return response.json()
+    except ValueError as exc:
+        kind = response.headers.get("content-type", "an unknown content type").split(";")[0]
+        raise MoodleError(
+            f"{base_url} did not answer like a Moodle site (got {kind} instead of JSON). "
+            "MOODLE_URL must be the Moodle address; for IU that is https://mycampus-classic.iu.org "
+            "(https://mycampus.iu.org is the new portal and has no Moodle web services).",
+            "notmoodle",
+        ) from exc
+
+
 class MoodleClient:
     def __init__(
         self, base_url: str, token: str, timeout: float = 120.0, http: httpx.Client | None = None
@@ -66,7 +80,7 @@ class MoodleClient:
         args = json.dumps([{"index": 0, "methodname": "tool_mobile_get_public_config", "args": {}}])
         response = client.get(f"{base_url.rstrip('/')}/lib/ajax/service-nologin.php", params={"args": args})
         response.raise_for_status()
-        payload = response.json()
+        payload = _json_or_error(response, base_url)
         entry = payload[0] if isinstance(payload, list) else payload
         if entry.get("error"):
             exception = entry.get("exception") or {}
@@ -85,7 +99,7 @@ class MoodleClient:
         }
         response = self.http.post(f"{self.base_url}/webservice/rest/server.php", data=data)
         response.raise_for_status()
-        payload = response.json()
+        payload = _json_or_error(response, self.base_url)
         if isinstance(payload, dict) and ("exception" in payload or "errorcode" in payload):
             raise MoodleError(
                 payload.get("message") or payload.get("error") or "Moodle web service error",

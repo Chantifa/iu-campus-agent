@@ -237,6 +237,10 @@ iu-agent moodle login
    `data/moodle_token.json` (or pass a token directly with `--token`, e.g. one created under
    *Preferences → Security keys* in myCampus).
 
+`MOODLE_URL` must stay on the Moodle site, `https://mycampus-classic.iu.org`. The new portal
+`https://mycampus.iu.org` is a different application without Moodle web services; pointing
+`MOODLE_URL` there makes `iu-agent moodle login` stop with *did not answer like a Moodle site*.
+
 Then:
 
 ```bash
