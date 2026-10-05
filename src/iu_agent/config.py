@@ -112,6 +112,14 @@ class Settings(BaseSettings):
     moodle_url: str = "https://mycampus-classic.iu.org"
     moodle_token: SecretStr | None = None
     moodle_service: str = "moodle_mobile_app"
+    moodle_username: str | None = Field(
+        default=None,
+        description="Default user name for `iu-agent moodle login` (the password is always asked)",
+    )
+    moodle_sso_hosts: str = Field(
+        default="iu.org,iubh.de",
+        description="Host suffixes (besides the Moodle host) the password may be sent to during SSO",
+    )
     moodle_sync_forums: str = Field(default="news", description="none | news | all")
     moodle_fetch_urls: bool = False
 

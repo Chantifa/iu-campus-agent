@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import getpass
 import shlex
 import time
 import uuid
@@ -11,6 +12,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+import httpx
 import typer
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -44,6 +46,7 @@ from iu_agent.models import (
     provider_supports_tools,
 )
 from iu_agent.moodle.auth import (
+    MoodleToken,
     clear_token,
     launch_url,
     load_token,
@@ -53,6 +56,8 @@ from iu_agent.moodle.auth import (
     token_info,
 )
 from iu_agent.moodle.client import MoodleClient, MoodleError
+from iu_agent.moodle.login import METHODS as LOGIN_METHODS
+from iu_agent.moodle.login import InteractiveLoginRequired, LoginError, password_login
 from iu_agent.rag.ingest import Ingestor, Manifest
 from iu_agent.rag.store import CourseVectorStore
 from iu_agent.ui import (
@@ -807,49 +812,36 @@ def status() -> None:
 # ----------------------------------------------------------------------------- moodle
 @moodle_app.command("login")
 def moodle_login(
+    username: str = typer.Option(
+        None, "--username", "-u", help="User name (e-mail) for the user name + password login."
+    ),
+    method: str = typer.Option(
+        "auto", "--method", help="How the password login signs in: auto | token | sso | form."
+    ),
+    browser: bool = typer.Option(
+        False, "--browser", help="Use the browser flow and paste the moodlemobile:// address instead."
+    ),
     token: str = typer.Option(
         None, "--token", help="Paste a token or a moodlemobile://token=... URL directly."
     ),
     no_browser: bool = typer.Option(
-        False, "--no-browser", help="Only print the login URL instead of opening it."
+        False, "--no-browser", help="With --browser: only print the login URL instead of opening it."
     ),
 ) -> None:
-    """Log in to myCampus through the browser (SSO) and store the web-service token."""
+    """Log in to myCampus with user name and password (default) and store the web-service token."""
     settings = load_settings()
-    passport: str | None = None
-    if not token:
-        try:
-            config = MoodleClient.public_config(settings.moodle_url)
-        except Exception as exc:
-            console.print(f"[red]Cannot read the public site configuration:[/red] {exc}")
-            raise typer.Exit(code=1) from exc
-        if not config.get("enablemobilewebservice"):
-            console.print(
-                "[red]The mobile web service is disabled on this site; "
-                "ask the administrators for a token.[/red]"
-            )
-            raise typer.Exit(code=1)
-        passport = make_passport()
-        url = launch_url(settings.moodle_url, passport, settings.moodle_service, config.get("launchurl"))
-        console.print(
-            Panel(
-                f"1. A browser window opens the myCampus login ({config.get('sitename')}).\n"
-                "2. Log in with your IU account (SSO).\n"
-                "3. The browser is then redirected to an address starting with [bold]moodlemobile://token=[/bold].\n"
-                "   It cannot open that address, but shows it in the address bar or on the error page.\n"
-                "4. Copy the whole address and paste it below.\n\n"
-                f"Login URL:\n{url}",
-                title="myCampus login",
-                border_style="cyan",
-            )
-        )
-        if not no_browser:
-            webbrowser.open(url)
-        from prompt_toolkit.shortcuts import prompt
+    if token:
+        parsed = _parse_token_or_exit(token, settings, None)
+    elif browser:
+        parsed = _browser_login(settings, no_browser)
+    else:
+        parsed = _password_login(settings, username, method)
+    _store_login(settings, parsed)
 
-        token = prompt("Paste the moodlemobile:// address (or a token): ")
+
+def _parse_token_or_exit(text: str, settings: Settings, passport: str | None) -> MoodleToken:
     try:
-        parsed = parse_launch_response(token, settings.moodle_url, passport)
+        parsed = parse_launch_response(text, settings.moodle_url, passport)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -857,10 +849,91 @@ def moodle_login(
         console.print(
             "[yellow]The site hash in the payload does not match this passport; continuing anyway.[/yellow]"
         )
+    return parsed
+
+
+def _password_login(settings: Settings, username: str | None, method: str) -> MoodleToken:
+    if method not in LOGIN_METHODS:
+        console.print(f"[red]--method must be one of: {', '.join(LOGIN_METHODS)}[/red]")
+        raise typer.Exit(code=2)
+    if not interactive_terminal():
+        console.print(
+            "The password login needs an interactive terminal to ask for the password. "
+            "Alternatives: `iu-agent moodle login --token <token>` or MOODLE_TOKEN in .env."
+        )
+        raise typer.Exit(code=2)
+    username = (username or settings.moodle_username or "").strip()
+    if not username:
+        username = typer.prompt("myCampus user name (e-mail)").strip()
+    password = getpass.getpass("Password (not shown, not stored): ")
+    if not username or not password:
+        console.print("[red]User name and password are both required.[/red]")
+        raise typer.Exit(code=1)
+    console.print(f"[dim]Signing in to {settings.moodle_url} as {username} ...[/dim]")
+    try:
+        return password_login(
+            settings,
+            username,
+            password,
+            method=method,
+            log=lambda message: console.print(f"[dim]  {message}[/dim]"),
+        )
+    except InteractiveLoginRequired as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        console.print(
+            "A script must not answer that. Use `iu-agent moodle login --browser` and paste the "
+            "moodlemobile:// address, or create a token under Preferences > Security keys in myCampus "
+            "and pass it with `--token`."
+        )
+        raise typer.Exit(code=1) from exc
+    except LoginError as exc:
+        console.print(f"[red]Login failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    except httpx.HTTPError as exc:
+        console.print(f"[red]Network error during the login:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    finally:
+        del password
+
+
+def _browser_login(settings: Settings, no_browser: bool) -> MoodleToken:
+    try:
+        config = MoodleClient.public_config(settings.moodle_url)
+    except Exception as exc:
+        console.print(f"[red]Cannot read the public site configuration:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    if not config.get("enablemobilewebservice"):
+        console.print(
+            "[red]The mobile web service is disabled on this site; ask the administrators for a token.[/red]"
+        )
+        raise typer.Exit(code=1)
+    passport = make_passport()
+    url = launch_url(settings.moodle_url, passport, settings.moodle_service, config.get("launchurl"))
+    console.print(
+        Panel(
+            f"1. A browser window opens the myCampus login ({config.get('sitename')}).\n"
+            "2. Log in with your IU account (SSO).\n"
+            "3. The browser is then redirected to an address starting with [bold]moodlemobile://token=[/bold].\n"
+            "   It cannot open that address, but shows it in the address bar or on the error page.\n"
+            "4. Copy the whole address and paste it below.\n\n"
+            f"Login URL:\n{url}",
+            title="myCampus login",
+            border_style="cyan",
+        )
+    )
+    if not no_browser:
+        webbrowser.open(url)
+    from prompt_toolkit.shortcuts import prompt
+
+    pasted = prompt("Paste the moodlemobile:// address (or a token): ")
+    return _parse_token_or_exit(pasted, settings, passport)
+
+
+def _store_login(settings: Settings, parsed: MoodleToken) -> None:
     client = MoodleClient(settings.moodle_url, parsed.token)
     try:
         info = client.site_info()
-    except (MoodleError, Exception) as exc:
+    except Exception as exc:
         console.print(f"[red]The token was rejected by myCampus:[/red] {exc}")
         raise typer.Exit(code=1) from exc
     path = save_token(settings, parsed, info)

@@ -121,7 +121,7 @@ Useful commands:
 | `iu-agent search "query" [--course X] [--k 6]` | raw retrieval without an LLM |
 | `iu-agent models [--live]` | list selectable models (live queries the provider APIs) |
 | `iu-agent status` | providers, vector store, index statistics |
-| `iu-agent moodle check / login / status / courses / sync / logout` | myCampus integration |
+| `iu-agent moodle check / login [-u USER] / status / courses / sync / logout` | myCampus integration (login with user name + password) |
 
 ## Choosing the model
 
@@ -221,21 +221,34 @@ Indexing is incremental, so a long first run can also be split by folder
 | Login type | 3 = SSO through an embedded browser (identity provider `auth.iu.org`, OAuth2) |
 | REST endpoint | `/webservice/rest/server.php` (answers *Invalid token* without a token) |
 
-So there **is** an API for the course content, but because the login is SSO, a token cannot be
-obtained with a username/password call. The agent uses the same flow as the official Moodle app:
+So there **is** an API for the course content. Every call needs a web-service token, and the
+agent gets one by signing in with your user name and password:
 
 ```bash
-iu-agent moodle login
+iu-agent moodle login                 # asks for user name and password (the password is not shown)
+iu-agent moodle login -u first.last@iu-study.org
 ```
 
-1. A browser opens `…/admin/tool/mobile/launch.php?service=moodle_mobile_app&passport=…`.
-2. Log in with your IU account.
-3. Moodle redirects to `moodlemobile://token=<base64>`; the browser cannot open that scheme but
-   shows the address (address bar or error page). Copy the whole address.
-4. Paste it into the terminal. The CLI decodes `sitehash:::token:::privatetoken`, checks the
-   site hash, verifies the token with `core_webservice_get_site_info` and stores it in
-   `data/moodle_token.json` (or pass a token directly with `--token`, e.g. one created under
-   *Preferences → Security keys* in myCampus).
+What happens, without any browser:
+
+1. Moodle's token endpoint (`login/token.php`) is tried first.
+2. If Moodle does not check the password itself (IU accounts live in the single sign-on), the CLI
+   opens the Moodle login page, follows its SSO link to `auth.iu.org`, submits the login form there
+   and follows the redirects back to Moodle. `--method form` uses Moodle's own login form instead.
+3. With the signed-in session it requests `admin/tool/mobile/launch.php` and reads the token from
+   the redirect `moodlemobile://token=<base64>`, the address the official app receives and a desktop
+   browser hides. The token is verified with `core_webservice_get_site_info` and stored in
+   `data/moodle_token.json`.
+
+The password is typed into your terminal, posted only over HTTPS to the Moodle host and to hosts
+matching `MOODLE_SSO_HOSTS` (default `iu.org,iubh.de`), and never stored or logged; only the token
+is kept. A CAPTCHA or a second factor is never answered by the script: the login stops and points
+you to the alternatives:
+
+```bash
+iu-agent moodle login --browser       # sign in in the browser, paste the moodlemobile:// address
+iu-agent moodle login --token <token> # a token from Preferences -> Security keys in myCampus
+```
 
 `MOODLE_URL` must stay on the Moodle site, `https://mycampus-classic.iu.org`. The new portal
 `https://mycampus.iu.org` is a different application without Moodle web services; pointing
@@ -397,6 +410,7 @@ file explicitly and an empty value disables the lookup.
 | `IU_DOCS_PATH` / `IU_INCLUDE_GLOBS` / `IU_EXCLUDE_GLOBS` / `MAX_FILE_MB` | `~/OneDrive/IU` / – / `Bill/**,Certificate/**,*recovery_codes*,*recovery-codes*` / 200 | source folder |
 | `DATA_DIR` / `WORKSPACE_DIR` / `ALLOW_OUTSIDE_WORKSPACE` | `data` / `.` / false | state folder, agent workspace |
 | `MOODLE_URL` / `MOODLE_TOKEN` / `MOODLE_SYNC_FORUMS` / `MOODLE_FETCH_URLS` | `https://mycampus-classic.iu.org` / – / `news` / false | myCampus |
+| `MOODLE_USERNAME` / `MOODLE_SSO_HOSTS` | – / `iu.org,iubh.de` | default user name for `moodle login`; hosts the password may be sent to during single sign-on |
 
 Changing `EMBEDDING_MODEL` requires `iu-agent ingest --reset` (different vector size).
 
