@@ -94,6 +94,7 @@ class LoginForm:
     user_field: str | None = None
     password_field: str | None = None
     challenge: str | None = None
+    user_label: str | None = None  # the site's own wording, e.g. "Personal E-Mail or Username"
 
 
 @dataclass
@@ -204,8 +205,20 @@ def find_login_form(html: str, page_url: str, *, identifier_only: bool = False) 
             user_field=user_input.get("name") if user_input is not None else None,
             password_field=password_input.get("name") if password_input is not None else None,
             challenge=challenge,
+            user_label=_field_label(soup, user_input) if user_input is not None else None,
         )
     return None
+
+
+def _field_label(soup: BeautifulSoup, element) -> str | None:
+    """The visible label of an input: ``<label for=id>``, a wrapping label, or the placeholder."""
+    label = None
+    if element.get("id"):
+        label = soup.find("label", attrs={"for": element["id"]})
+    label = label or element.find_parent("label")
+    text = label.get_text(" ", strip=True) if label is not None else (element.get("placeholder") or "")
+    text = text.strip().rstrip("*").strip()
+    return text[:80] or None
 
 
 def find_challenge(html: str, page_url: str) -> str | None:
@@ -376,8 +389,9 @@ def _submit_credentials(
         again = find_login_form(page.text, str(page.url), identifier_only=True)
         if again is not None and _host(again.action) == host:
             reason = extract_error(page.text) or "no reason given"
+            asked = f' Its form asks for "{form.user_label}".' if form.user_label else ""
             raise LoginError(
-                f"{host} did not accept the user name or password ({reason}).",
+                f"{host} did not accept the user name or password ({reason}).{asked}",
                 "invalidlogin",
                 after_password=True,
             )
@@ -464,6 +478,30 @@ def token_from_session(http: httpx.Client, base_url: str, service: str, suffixes
             "needsattention",
         )
     raise LoginError("Too many redirects while requesting the token.", "redirect_loop")
+
+
+def describe_login(settings: Settings, http: httpx.Client | None = None) -> tuple[str, str | None] | None:
+    """``(host, label of the user-name field)`` of the page that will ask for the credentials.
+
+    Nothing is submitted. Returns ``None`` when the page cannot be determined.
+    """
+    base_url = settings.moodle_url.rstrip("/")
+    suffixes = sso_host_suffixes(settings)
+    own_client = http is None
+    http = http or new_http_client(timeout=30.0)
+    try:
+        page = _follow(http, http.get(f"{base_url}/login/index.php"), base_url, suffixes)
+        link = find_sso_link(page.text, str(page.url))
+        if link is not None:
+            page = _follow(http, http.get(link), base_url, suffixes)
+        form = find_login_form(page.text, str(page.url), identifier_only=True)
+        return (_host(form.action), form.user_label) if form is not None else None
+    except (LoginError, httpx.HTTPError):
+        return None
+    finally:
+        http.cookies.clear()
+        if own_client:
+            http.close()
 
 
 # ----------------------------------------------------------------------------- entry point

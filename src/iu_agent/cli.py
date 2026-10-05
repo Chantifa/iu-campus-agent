@@ -57,7 +57,7 @@ from iu_agent.moodle.auth import (
 )
 from iu_agent.moodle.client import MoodleClient, MoodleError
 from iu_agent.moodle.login import METHODS as LOGIN_METHODS
-from iu_agent.moodle.login import InteractiveLoginRequired, LoginError, password_login
+from iu_agent.moodle.login import InteractiveLoginRequired, LoginError, describe_login, password_login
 from iu_agent.rag.ingest import Ingestor, Manifest
 from iu_agent.rag.store import CourseVectorStore
 from iu_agent.ui import (
@@ -869,7 +869,12 @@ def _password_login(
         raise typer.Exit(code=2)
     username = (username or settings.moodle_username or "").strip()
     if not username:
-        username = typer.prompt("myCampus user name (e-mail)").strip()
+        asked = describe_login(settings)
+        label = "User name"
+        if asked and asked[1]:
+            console.print(f"[dim]{asked[0]} asks for: {asked[1]}[/dim]")
+            label = asked[1]
+        username = typer.prompt(label).strip()
     password = getpass.getpass("Password (not shown, not stored): ")
     if not username or not password:
         console.print("[red]User name and password are both required.[/red]")

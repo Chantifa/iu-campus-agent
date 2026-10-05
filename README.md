@@ -226,8 +226,12 @@ agent gets one by signing in with your user name and password:
 
 ```bash
 iu-agent moodle login                 # asks for user name and password (the password is not shown)
-iu-agent moodle login -u first.last@iu-study.org
+iu-agent moodle login -u <personal e-mail or IU user name>
 ```
+
+Use the identifier the IU sign-in page itself asks for. The CLI shows that wording before it
+prompts (`auth.iu.org asks for: Personal E-Mail or Username`): it is the private e-mail address
+you registered with, or your IU user name, and not the `@iu-study.org` mailbox address.
 
 What happens, without any browser:
 

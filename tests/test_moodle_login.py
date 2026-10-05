@@ -9,6 +9,7 @@ from iu_agent.config import Settings
 from iu_agent.moodle.login import (
     InteractiveLoginRequired,
     LoginError,
+    describe_login,
     find_login_form,
     find_skip_form,
     host_allowed,
@@ -79,7 +80,8 @@ class FakeCampus:
         return (
             "<html><title>Log in | IU</title><body>"
             '<form method="POST"><input type="hidden" name="state" value="st1">'
-            f'<input type="text" name="username"><input type="password" name="password">{captcha}'
+            '<label for="username">Personal E-Mail or Username *</label>'
+            f'<input type="text" name="username" id="username"><input type="password" name="password">{captcha}'
             f'{error}<button type="submit" name="action" value="default">Continue</button></form>'
             "</body></html>"
         )
@@ -231,6 +233,7 @@ def test_wrong_password_is_reported_by_the_identity_provider_and_not_retried(set
         password_login(settings, USER, "wrong", http=campus.client())
     assert info.value.code == "invalidlogin"
     assert "auth.iu.org did not accept" in str(info.value)
+    assert 'asks for "Personal E-Mail or Username"' in str(info.value)
     assert "Wrong email or password" in str(info.value)
     assert campus.password_posts == [(IDP_HOST, "/u/login")]
 
@@ -331,3 +334,13 @@ def test_native_form_login_and_its_error(settings):
         password_login(settings, "student", "wrong", method="form", http=campus.client())
     assert info.value.code == "invalidlogin"
     assert "Invalid login" in str(info.value)
+
+
+def test_describe_login_reports_the_sites_own_wording(settings):
+    campus = FakeCampus()
+    assert describe_login(settings, http=campus.client()) == (IDP_HOST, "Personal E-Mail or Username")
+    assert campus.posts == []  # nothing is submitted
+
+    native = FakeCampus(sso=False)
+    host, label = describe_login(settings, http=native.client())
+    assert host == MOODLE_HOST and label is None
