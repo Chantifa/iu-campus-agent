@@ -816,7 +816,10 @@ def moodle_login(
         None, "--username", "-u", help="User name (e-mail) for the user name + password login."
     ),
     method: str = typer.Option(
-        "auto", "--method", help="How the password login signs in: auto | token | sso | form."
+        "auto", "--method", help="How the password login signs in: auto | sso | token | form."
+    ),
+    debug: bool = typer.Option(
+        False, "--debug", help="Print every request of the login (host, path, status; no secrets)."
     ),
     browser: bool = typer.Option(
         False, "--browser", help="Use the browser flow and paste the moodlemobile:// address instead."
@@ -835,7 +838,7 @@ def moodle_login(
     elif browser:
         parsed = _browser_login(settings, no_browser)
     else:
-        parsed = _password_login(settings, username, method)
+        parsed = _password_login(settings, username, method, debug)
     _store_login(settings, parsed)
 
 
@@ -852,7 +855,9 @@ def _parse_token_or_exit(text: str, settings: Settings, passport: str | None) ->
     return parsed
 
 
-def _password_login(settings: Settings, username: str | None, method: str) -> MoodleToken:
+def _password_login(
+    settings: Settings, username: str | None, method: str, debug: bool = False
+) -> MoodleToken:
     if method not in LOGIN_METHODS:
         console.print(f"[red]--method must be one of: {', '.join(LOGIN_METHODS)}[/red]")
         raise typer.Exit(code=2)
@@ -876,7 +881,8 @@ def _password_login(settings: Settings, username: str | None, method: str) -> Mo
             username,
             password,
             method=method,
-            log=lambda message: console.print(f"[dim]  {message}[/dim]"),
+            log=lambda message: console.print(f"[dim]  {message}[/dim]", markup=True, highlight=False),
+            debug=debug,
         )
     except InteractiveLoginRequired as exc:
         console.print(f"[yellow]{exc}[/yellow]")
@@ -888,6 +894,11 @@ def _password_login(settings: Settings, username: str | None, method: str) -> Mo
         raise typer.Exit(code=1) from exc
     except LoginError as exc:
         console.print(f"[red]Login failed:[/red] {exc}")
+        if not debug:
+            console.print(
+                "[dim]Run `iu-agent moodle login --debug` to see every step (host, path and status only; "
+                "no password, token or cookie is printed).[/dim]"
+            )
         raise typer.Exit(code=1) from exc
     except httpx.HTTPError as exc:
         console.print(f"[red]Network error during the login:[/red] {exc}")

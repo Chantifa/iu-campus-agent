@@ -1,21 +1,25 @@
-"""Username + password login for Moodle sites, without a browser.
+"""User name + password login for Moodle sites, without a browser.
 
-:func:`password_login` tries these strategies (``method="auto"``):
+:func:`password_login` signs in with one of these strategies:
 
-1. ``token`` - Moodle's own token endpoint ``login/token.php``. Works when Moodle itself checks the
-   password (manual, LDAP, database ... authentication).
-2. ``sso``   - sign in through the site's single sign-on provider: open the Moodle login page,
-   follow its SSO link to the identity provider, submit the provider's HTML login form (IU uses
-   Auth0 at ``auth.iu.org``) and follow the redirects back to Moodle.
-3. ``form``  - Moodle's own HTML login form (``login/index.php``).
+* ``sso``   - sign in through the site's single sign-on provider: open the Moodle login page,
+  follow its SSO link to the identity provider, submit the provider's HTML login form (IU uses
+  Auth0 at ``auth.iu.org``) and follow the redirects back to Moodle.
+* ``token`` - Moodle's own token endpoint ``login/token.php``. Works when Moodle itself checks the
+  password (manual, LDAP, database ... authentication).
+* ``form``  - Moodle's own HTML login form (``login/index.php``).
 
-After 2. or 3. the session is logged in and the web-service token is taken from the redirect of
-``admin/tool/mobile/launch.php`` (``moodlemobile://token=...``), the address the official app
-receives and a desktop browser usually hides.
+``method="auto"`` uses single sign-on when the site announces an identity provider and the
+token endpoint (then the form) otherwise. Credentials that one system has rejected are never
+repeated against another one.
+
+After ``sso`` or ``form`` the session is signed in and the web-service token is read from the
+redirect of ``admin/tool/mobile/launch.php`` (``moodlemobile://token=...``), the address the
+official app receives and a desktop browser usually hides.
 
 The password is only posted over HTTPS to the Moodle host or to hosts matching
-``MOODLE_SSO_HOSTS``; it is never stored or logged. CAPTCHAs and multi-factor prompts are not
-handled, they raise :class:`InteractiveLoginRequired` (use ``iu-agent moodle login --browser``).
+``MOODLE_SSO_HOSTS``; it is never stored or logged. CAPTCHAs and second factors are never
+answered: they raise :class:`InteractiveLoginRequired` (use ``iu-agent moodle login --browser``).
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from bs4 import BeautifulSoup
 
 from iu_agent.config import Settings
 from iu_agent.moodle.auth import MoodleToken, make_passport, parse_launch_response
+from iu_agent.moodle.client import MoodleClient, MoodleError
 
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -37,7 +42,7 @@ BROWSER_UA = (
 )
 URL_SCHEME = "moodlemobile"
 MAX_HOPS = 15
-METHODS = ("auto", "token", "sso", "form")
+METHODS = ("auto", "sso", "token", "form")
 
 _USER_FIELDS = ("username", "email", "identifier", "login", "user", "j_username", "loginfmt")
 _CAPTCHA_FIELDS = ("captcha", "g-recaptcha-response", "h-captcha-response", "cf-turnstile-response")
@@ -52,18 +57,34 @@ _ERROR_SELECTORS = (
     ".alert-danger",
     "[role=alert]",
 )
+# Optional prompts an identity provider may show after the password ("create a passkey?" ...).
+_SKIP_VALUES = {
+    "abort-passkey-enrollment",
+    "snooze-enrollment",
+    "skip",
+    "skip-enrollment",
+    "remind-later",
+    "refuse-add-device",
+}
+_SKIP_TEXT_RE = re.compile(
+    r"continue without|not now|skip|remind me later|maybe later|ohne .{0,30}fortfahren|sp[aä]ter|"
+    r"[üu]berspringen|nicht jetzt",
+    re.IGNORECASE,
+)
 
 Log = Callable[[str], None]
 
 
 class LoginError(RuntimeError):
-    def __init__(self, message: str, code: str | None = None) -> None:
+    def __init__(self, message: str, code: str | None = None, *, after_password: bool = False) -> None:
         super().__init__(message)
         self.code = code
+        # True once a system has seen the password: never retry it somewhere else after that.
+        self.after_password = after_password
 
 
 class InteractiveLoginRequired(LoginError):
-    """The site asks for something a script must not answer (CAPTCHA, second factor)."""
+    """The site asks for something a script must not answer (CAPTCHA, second factor, a prompt)."""
 
 
 @dataclass
@@ -73,6 +94,13 @@ class LoginForm:
     user_field: str | None = None
     password_field: str | None = None
     challenge: str | None = None
+
+
+@dataclass
+class SkipForm:
+    action: str
+    fields: dict[str, str]
+    label: str
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -93,6 +121,39 @@ def host_allowed(url: str, base_url: str, suffixes: list[str]) -> bool:
 
 def new_http_client(timeout: float = 60.0) -> httpx.Client:
     return httpx.Client(timeout=timeout, follow_redirects=False, headers={"User-Agent": BROWSER_UA})
+
+
+def _host(url: str) -> str:
+    return urlparse(url).hostname or ""
+
+
+def _title(html: str) -> str | None:
+    title = BeautifulSoup(html, "html.parser").find("title")
+    return title.get_text(" ", strip=True)[:80] if title else None
+
+
+def trace_hook(log: Log) -> Callable[[httpx.Response], None]:
+    """Log every request as ``METHOD host/path -> status``. Query strings (state, code, sesskey),
+    cookies, bodies and the token are never printed."""
+
+    def hook(response: httpx.Response) -> None:
+        request = response.request
+        line = f"{request.method} {request.url.host}{request.url.path} -> {response.status_code}"
+        location = response.headers.get("location")
+        if location:
+            target = urlparse(urljoin(str(request.url), location))
+            if target.scheme in ("http", "https"):
+                line += f" -> {target.netloc}{target.path}"
+            else:
+                line += f" -> {target.scheme}://token=<hidden>"
+        elif "html" in response.headers.get("content-type", ""):
+            response.read()
+            title = _title(response.text)
+            if title:
+                line += f'  "{title}"'
+        log("trace: " + line)
+
+    return hook
 
 
 def find_login_form(html: str, page_url: str, *, identifier_only: bool = False) -> LoginForm | None:
@@ -163,6 +224,43 @@ def find_challenge(html: str, page_url: str) -> str | None:
     return None
 
 
+def find_skip_form(html: str, page_url: str) -> SkipForm | None:
+    """A form offering to skip an optional prompt (for example "Continue without passkeys")."""
+    soup = BeautifulSoup(html, "html.parser")
+    for form in soup.find_all("form"):
+        if form.find("input", {"type": "password"}):
+            continue
+        hidden = {
+            i["name"]: i.get("value") or ""
+            for i in form.find_all("input")
+            if i.get("name") and (i.get("type") or "").lower() == "hidden"
+        }
+        for button in form.find_all("button"):
+            name, value = button.get("name"), button.get("value") or ""
+            label = button.get_text(" ", strip=True)
+            if name and (value in _SKIP_VALUES or _SKIP_TEXT_RE.search(label)):
+                return SkipForm(
+                    action=urljoin(page_url, form.get("action") or page_url),
+                    fields={**hidden, name: value},
+                    label=label or value,
+                )
+    return None
+
+
+def describe_page(html: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    title = _title(html) or "a page without title"
+    heading = soup.find(["h1", "h2"])
+    heading_text = heading.get_text(" ", strip=True)[:80] if heading else ""
+    buttons = [b.get_text(" ", strip=True)[:40] for b in soup.find_all("button") if b.get_text(strip=True)]
+    text = f"'{title}'"
+    if heading_text and heading_text.lower() not in title.lower():
+        text += f" / '{heading_text}'"
+    if buttons:
+        text += f" (buttons: {', '.join(buttons[:4])})"
+    return text
+
+
 def find_sso_link(html: str, page_url: str) -> str | None:
     soup = BeautifulSoup(html, "html.parser")
     for anchor in soup.find_all("a"):
@@ -198,8 +296,8 @@ def _follow(
             )
         if not host_allowed(target, base_url, suffixes):
             raise LoginError(
-                f"Unexpected redirect to {urlparse(target).hostname}. If that host belongs to your "
-                "university's login, add it to MOODLE_SSO_HOSTS.",
+                f"Unexpected redirect to {_host(target)}. If that host belongs to your university's "
+                "login, add it to MOODLE_SSO_HOSTS.",
                 "unexpected_host",
             )
         response = http.get(target)
@@ -221,7 +319,15 @@ def token_via_endpoint(
         raise LoginError("The token endpoint did not return JSON.", "notjson") from exc
     if payload.get("token"):
         return MoodleToken(token=payload["token"], private_token=payload.get("privatetoken"))
-    raise LoginError(payload.get("error") or "The token request was refused.", payload.get("errorcode"))
+    code = payload.get("errorcode")
+    message = payload.get("error") or "The token request was refused."
+    if code == "invalidlogin":
+        raise LoginError(
+            f"{_host(base_url)} did not accept the user name or password ({message}).",
+            code,
+            after_password=True,
+        )
+    raise LoginError(f"Token endpoint: {message}", code)
 
 
 def _submit_credentials(
@@ -233,16 +339,20 @@ def _submit_credentials(
     suffixes: list[str],
     log: Log,
 ) -> httpx.Response:
+    """Fill and post the login form(s) on ``page``; returns the page reached afterwards."""
     for _ in range(4):  # user-name-first providers need two steps
         form = find_login_form(page.text, str(page.url), identifier_only=True)
         if form is None:
             return page
+        host = _host(form.action)
         if form.challenge:
-            raise InteractiveLoginRequired(f"The login page asks for {form.challenge}.", "challenge")
+            raise InteractiveLoginRequired(
+                f"The login page of {host} asks for {form.challenge}.", "challenge"
+            )
         if not host_allowed(form.action, base_url, suffixes):
             raise LoginError(
-                f"The login form posts to {urlparse(form.action).hostname}, which is not an allowed host "
-                "(MOODLE_SSO_HOSTS); the password was not sent.",
+                f"The login form posts to {host}, which is not an allowed host (MOODLE_SSO_HOSTS); "
+                "the password was not sent.",
                 "unexpected_host",
             )
         data = dict(form.fields)
@@ -250,20 +360,50 @@ def _submit_credentials(
             data[form.user_field] = username
         if form.password_field:
             data[form.password_field] = password
-        log(f"signing in at {urlparse(form.action).hostname}")
-        page = _follow(http, http.post(form.action, data=data), base_url, suffixes)
+        log(f"signing in at {host}")
+        try:
+            page = _follow(http, http.post(form.action, data=data), base_url, suffixes)
+        except LoginError as exc:
+            exc.after_password = exc.after_password or bool(form.password_field)
+            raise
         if not form.password_field:
             continue  # the next page asks for the password
         challenge = find_challenge(page.text, str(page.url))
         if challenge:
-            raise InteractiveLoginRequired(f"The site asks for {challenge} after the password.", "challenge")
+            raise InteractiveLoginRequired(
+                f"{host} asks for {challenge} after the password.", "challenge", after_password=True
+            )
         again = find_login_form(page.text, str(page.url), identifier_only=True)
-        if again is not None and urlparse(again.action).hostname == urlparse(form.action).hostname:
+        if again is not None and _host(again.action) == host:
+            reason = extract_error(page.text) or "no reason given"
             raise LoginError(
-                extract_error(page.text) or "The user name or password was not accepted.", "invalidlogin"
+                f"{host} did not accept the user name or password ({reason}).",
+                "invalidlogin",
+                after_password=True,
             )
         return page
-    raise LoginError("The login form kept coming back.", "loop")
+    raise LoginError("The login form kept coming back.", "loop", after_password=True)
+
+
+def _leave_identity_provider(
+    http: httpx.Client, page: httpx.Response, idp_host: str, base_url: str, suffixes: list[str], log: Log
+) -> None:
+    """After the password: skip optional prompts until the provider hands back to Moodle."""
+    for _ in range(5):
+        if _host(str(page.url)) != idp_host:
+            return
+        skip = find_skip_form(page.text, str(page.url))
+        if skip is None or not host_allowed(skip.action, base_url, suffixes):
+            raise InteractiveLoginRequired(
+                f"{idp_host} accepted the password but shows another page before returning to Moodle: "
+                f"{describe_page(page.text)}. Open myCampus in a browser, complete that step once, "
+                "then run the login again.",
+                "interstitial",
+                after_password=True,
+            )
+        log(f"skipping the optional prompt at {idp_host}: '{skip.label}'")
+        page = _follow(http, http.post(skip.action, data=skip.fields), base_url, suffixes)
+    raise LoginError(f"{idp_host} kept showing extra pages.", "loop", after_password=True)
 
 
 def login_via_sso(
@@ -274,10 +414,12 @@ def login_via_sso(
     if link is not None:
         page = _follow(http, http.get(link), base_url, suffixes)
     form = find_login_form(page.text, str(page.url), identifier_only=True)
-    base_host = urlparse(base_url).hostname
-    if form is None or (link is None and urlparse(form.action).hostname == base_host):
+    base_host = _host(base_url)
+    if form is None or (link is None and _host(form.action) == base_host):
         raise LoginError("The login page offers no single sign-on provider.", "nosso")
-    _submit_credentials(http, page, base_url, username, password, suffixes, log)
+    idp_host = _host(form.action)
+    page = _submit_credentials(http, page, base_url, username, password, suffixes, log)
+    _leave_identity_provider(http, page, idp_host, base_url, suffixes, log)
 
 
 def login_via_form(
@@ -285,13 +427,13 @@ def login_via_form(
 ) -> None:
     page = _follow(http, http.get(f"{base_url}/login/index.php"), base_url, suffixes)
     form = find_login_form(page.text, str(page.url))
-    if form is None or urlparse(form.action).hostname != urlparse(base_url).hostname:
+    if form is None or _host(form.action) != _host(base_url):
         raise LoginError("The site has no user name / password form of its own.", "noform")
     _submit_credentials(http, page, base_url, username, password, suffixes, log)
 
 
 def token_from_session(http: httpx.Client, base_url: str, service: str, suffixes: list[str]) -> MoodleToken:
-    """Ask the logged-in session for the app token and read it from the redirect."""
+    """Ask the signed-in session for the app token and read it from the redirect."""
     passport = make_passport()
     response = http.get(
         f"{base_url}/admin/tool/mobile/launch.php",
@@ -304,27 +446,41 @@ def token_from_session(http: httpx.Client, base_url: str, service: str, suffixes
         if response.is_redirect:
             target = urljoin(str(response.url), location)
             if urlparse(target).path.rstrip("/").endswith("/login/index.php"):
-                raise LoginError(
-                    "Moodle did not accept the login (the session is not signed in).", "notloggedin"
-                )
+                reason = None
+                if host_allowed(target, base_url, suffixes):
+                    reason = extract_error(http.get(target).text)
+                detail = f": {reason}" if reason else " (the session is not signed in)."
+                raise LoginError(f"Moodle did not complete the sign-in{detail}", "notloggedin")
             if not host_allowed(target, base_url, suffixes):
-                raise LoginError(f"Unexpected redirect to {urlparse(target).hostname}.", "unexpected_host")
+                raise LoginError(f"Unexpected redirect to {_host(target)}.", "unexpected_host")
             response = http.get(target)
             continue
         match = re.search(rf"{URL_SCHEME}://token=[A-Za-z0-9+/=%_\-]+", response.text)
         if match:
             return parse_launch_response(match.group(0), base_url, passport)
-        title = BeautifulSoup(response.text, "html.parser").find("title")
-        shown = title.get_text(strip=True)[:80] if title else f"HTTP {response.status_code}"
         raise LoginError(
-            f"Moodle showed a page instead of the token ({shown}). Open myCampus in a browser once, "
-            "complete what it asks for (policy, profile), then retry.",
+            f"Moodle showed a page instead of the token ({_title(response.text) or response.status_code}). "
+            "Open myCampus in a browser once, complete what it asks for (policy, profile), then retry.",
             "needsattention",
         )
     raise LoginError("Too many redirects while requesting the token.", "redirect_loop")
 
 
 # ----------------------------------------------------------------------------- entry point
+def _strategy_order(method: str, http: httpx.Client, base_url: str, log: Log) -> tuple[str, ...]:
+    if method != "auto":
+        return (method,)
+    try:
+        providers = MoodleClient.public_config(base_url, http=http).get("identityproviders") or []
+    except MoodleError as exc:
+        raise LoginError(str(exc), exc.errorcode) from exc
+    if providers:
+        names = ", ".join(str(p.get("name")) for p in providers)
+        log(f"the site signs in through single sign-on ({names})")
+        return ("sso", "token", "form")
+    return ("token", "form")
+
+
 def password_login(
     settings: Settings,
     username: str,
@@ -333,6 +489,7 @@ def password_login(
     method: str = "auto",
     http: httpx.Client | None = None,
     log: Log | None = None,
+    debug: bool = False,
 ) -> MoodleToken:
     if method not in METHODS:
         raise ValueError(f"method must be one of {', '.join(METHODS)}")
@@ -341,34 +498,40 @@ def password_login(
     suffixes = sso_host_suffixes(settings)
     own_client = http is None
     http = http or new_http_client()
+    hook = trace_hook(log) if debug else None
+    if hook is not None:
+        http.event_hooks["response"].append(hook)
     try:
-        if method in ("auto", "token"):
-            try:
-                token = token_via_endpoint(http, base_url, username, password, settings.moodle_service)
-                log("the token endpoint accepted the credentials")
-                return token
-            except LoginError as exc:
-                if method == "token":
-                    raise
-                log(f"token endpoint: {exc} - trying the web login")
-        strategies = {"auto": ("sso", "form"), "sso": ("sso",), "form": ("form",)}.get(method, ())
+        order = _strategy_order(method, http, base_url, log)
         failures: list[LoginError] = []
-        for strategy in strategies:
-            runner = login_via_sso if strategy == "sso" else login_via_form
+        for strategy in order:
             try:
+                if strategy == "token":
+                    token = token_via_endpoint(http, base_url, username, password, settings.moodle_service)
+                    log("the token endpoint accepted the credentials")
+                    return token
+                runner = login_via_sso if strategy == "sso" else login_via_form
                 runner(http, base_url, username, password, suffixes, log)
                 log("signed in, requesting the app token")
-                return token_from_session(http, base_url, settings.moodle_service, suffixes)
+                try:
+                    return token_from_session(http, base_url, settings.moodle_service, suffixes)
+                except LoginError as exc:
+                    exc.after_password = True
+                    raise
             except InteractiveLoginRequired:
-                raise
+                raise  # a CAPTCHA or second factor ends the attempt, no other system is tried
             except LoginError as exc:
-                if exc.code == "invalidlogin":
-                    raise  # wrong credentials: do not repeat them against another form
+                if exc.after_password or len(order) == 1:
+                    raise  # never repeat credentials one system has already seen
                 failures.append(exc)
+                log(f"{strategy}: {exc}")
                 http.cookies.clear()
-        if failures:
-            raise LoginError("; ".join(str(f) for f in failures), failures[-1].code)
-        raise LoginError("The login failed.", "failed")
+        raise LoginError(
+            "; ".join(str(f) for f in failures) or "The login failed.",
+            failures[-1].code if failures else "failed",
+        )
     finally:
+        if hook is not None and hook in http.event_hooks["response"]:
+            http.event_hooks["response"].remove(hook)
         if own_client:
             http.close()

@@ -231,14 +231,23 @@ iu-agent moodle login -u first.last@iu-study.org
 
 What happens, without any browser:
 
-1. Moodle's token endpoint (`login/token.php`) is tried first.
-2. If Moodle does not check the password itself (IU accounts live in the single sign-on), the CLI
-   opens the Moodle login page, follows its SSO link to `auth.iu.org`, submits the login form there
-   and follows the redirects back to Moodle. `--method form` uses Moodle's own login form instead.
-3. With the signed-in session it requests `admin/tool/mobile/launch.php` and reads the token from
+1. The public site configuration tells the CLI that IU signs in through single sign-on
+   (`auth.iu.org`). It opens the Moodle login page, follows the SSO link, submits the login form
+   at `auth.iu.org` and follows the redirects back to Moodle. Optional prompts such as "create a
+   passkey" are skipped.
+2. With the signed-in session it requests `admin/tool/mobile/launch.php` and reads the token from
    the redirect `moodlemobile://token=<base64>`, the address the official app receives and a desktop
    browser hides. The token is verified with `core_webservice_get_site_info` and stored in
    `data/moodle_token.json`.
+
+On a Moodle site without single sign-on the token endpoint `login/token.php` is used instead
+(`--method token`), then Moodle's own login form (`--method form`). Credentials one system has
+rejected are never repeated against another one.
+
+If the login fails, the message names the system that refused (`auth.iu.org did not accept …` or
+`Moodle did not complete the sign-in: …`). `iu-agent moodle login --debug` prints every request as
+`METHOD host/path -> status` with page titles; query strings, cookies, the password and the token
+are never printed, so the trace can be shared.
 
 The password is typed into your terminal, posted only over HTTPS to the Moodle host and to hosts
 matching `MOODLE_SSO_HOSTS` (default `iu.org,iubh.de`), and never stored or logged; only the token
