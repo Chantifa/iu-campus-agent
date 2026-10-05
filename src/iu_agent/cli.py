@@ -937,7 +937,11 @@ def moodle_logout() -> None:
 def moodle_check() -> None:
     """Show the public web-service configuration of the myCampus site (no login needed)."""
     settings = load_settings()
-    config = MoodleClient.public_config(settings.moodle_url)
+    try:
+        config = MoodleClient.public_config(settings.moodle_url)
+    except Exception as exc:
+        console.print(f"[red]Cannot read the public site configuration:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
     table = Table(title=f"{config.get('sitename')} ({settings.moodle_url})", show_header=False)
     table.add_column("Key", style="bold")
     table.add_column("Value")
